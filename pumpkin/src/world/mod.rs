@@ -1,4 +1,5 @@
 use crate::block::entities::{BlockEntity, block_entity_from_nbt};
+use crate::world::entity_cache::EntityCache;
 use dashmap::DashMap;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::chunk::Biome;
@@ -11,6 +12,7 @@ use pumpkin_protocol::bedrock::network_item::{
 };
 use pumpkin_protocol::codec::data_component::data_to_proto_sound;
 use pumpkin_world::generation::proto_chunk::GenerationCache;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Weak};
 use std::{
@@ -20,6 +22,7 @@ use std::{
 use tracing::{debug, error, info, trace, warn};
 
 pub mod chunker;
+mod entity_cache;
 pub mod explosion;
 pub mod loot;
 pub mod map;
@@ -123,7 +126,7 @@ use pumpkin_util::text::{TextComponent, color::NamedColor};
 use pumpkin_util::version::JavaMinecraftVersion;
 use pumpkin_util::{
     Difficulty,
-    math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3},
+    math::{bounding_box::BoundingBox, position::BlockPos, vector3::Vector3},
 };
 use pumpkin_util::{
     math::{get_section_cord, position::chunk_section_from_pos, vector2::Vector2},
@@ -200,6 +203,8 @@ pub struct World {
     /// A map of active entities within the world, keyed by their unique UUID.
     /// This does not include players.
     pub entities: ArcSwap<Vec<Arc<dyn EntityBase>>>,
+    //spatial index entity lookup cache thing
+    pub entity_lookup_cache: Arc<EntityCache>,
     /// The world's scoreboard, used for tracking scores, objectives, and display information.
     pub scoreboard: Mutex<Scoreboard>,
     /// The world's worldborder, defining the playable area and controlling its expansion or contraction.
@@ -299,6 +304,7 @@ impl World {
             level_info,
             players: ArcSwap::new(Arc::new(Vec::new())),
             entities: ArcSwap::new(Arc::new(Vec::new())),
+            entity_lookup_cache: Arc::new(EntityCache::new()),
             scoreboard: Mutex::new(Scoreboard::default()),
             worldborder: Mutex::new(Worldborder::new(0.0, 0.0, 5.999_996_8E7, 0, 5, 300)),
             level_time: Mutex::new(LevelTime::new()),
@@ -1020,6 +1026,7 @@ impl World {
             dragon_fight::DragonFight::tick(fight_mutex, self).await;
         }
 
+        self.entity_lookup_cache.apply_queued_ops().await;
         let total_elapsed = start.elapsed();
         if total_elapsed.as_millis() > 50 {
             debug!(
@@ -3782,6 +3789,9 @@ impl World {
                         world.entities.rcu(|current_entities| {
                             let mut new_entities = (**current_entities).clone();
                             new_entities.extend(entities_to_add.iter().cloned());
+                            world.entity_lookup_cache.add_entities(entities_to_add.iter()
+                            .map(|entity| Arc::downgrade(entity)).collect::<Vec<Weak<dyn EntityBase>>>());
+                            //CACHEPOINTHERE
                             new_entities
                         });
                     }
@@ -4223,6 +4233,8 @@ impl World {
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
             new_entities.push(entity.clone());
+            //CACHEPOINTFinish
+            self.entity_lookup_cache.add_entity(Arc::downgrade(entity));
             new_entities
         });
     }
@@ -4231,6 +4243,7 @@ impl World {
         self.broadcast_entity_spawn(&entity);
         entity.init_data_tracker().await;
         self.add_entity_silent(entity).await;
+        eprintln!("spawned entity");
     }
 
     pub fn broadcast_entity_spawn(&self, entity: &Arc<dyn EntityBase>) {
@@ -4272,6 +4285,8 @@ impl World {
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
             new_entities.push(entity.clone());
+            //CACHEPOINTFinish
+            self.entity_lookup_cache.add_entity(Arc::downgrade(&entity));
             new_entities
         });
     }
@@ -4282,7 +4297,20 @@ impl World {
         self.spawn_state.load().remove_entity(self, entity);
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
-            new_entities.retain(|e| e.get_entity().entity_uuid != base_entity.entity_uuid);
+            // new_entities.retain(|e| e.get_entity().entity_uuid != base_entity.entity_uuid);
+            if let Some(index) = new_entities
+                .par_iter()
+                .position_any(|e| e.get_entity().entity_uuid != base_entity.entity_uuid)
+            {
+                new_entities.swap_remove(index);
+                //CACHEPOINTFinish
+                self.entity_lookup_cache.remove_entity(entity);
+            } else {
+                error!(
+                    "tried to remove entity from world when that entity didn't exist in that world"
+                );
+            }
+
             new_entities
         });
 
@@ -4292,6 +4320,7 @@ impl World {
             &CRemoveEntities::new(&[base_entity.entity_id.into()]),
             &CRemoveActor::new(VarLong(base_entity.entity_id as i64)),
         );
+        eprintln!("removed entity");
     }
 
     pub async fn remove_entities_in_chunks(
@@ -4306,6 +4335,7 @@ impl World {
 
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
+            //CACHEPOINFinish
             new_entities.retain(|entity| {
                 let base_entity = entity.get_entity();
                 let pos = base_entity.chunk_pos.load();
@@ -4320,6 +4350,7 @@ impl World {
         });
 
         for entity in entities_to_remove {
+            self.entity_lookup_cache.remove_entity(entity.as_ref());
             self.save_entity(&entity).await;
             self.spawn_state.load().remove_entity(self, entity.as_ref());
         }

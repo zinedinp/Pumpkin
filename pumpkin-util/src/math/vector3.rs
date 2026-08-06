@@ -520,6 +520,22 @@ impl<T: Math + Copy> Neg for Vector3<T> {
 }
 */
 
+impl Vector3<i32> {
+    /// Packs this block position into a 64-bit integer.
+    ///
+    /// The packing format is:
+    /// - Bits 42-63: X coordinate (22 bits)
+    /// - Bits 20-41: Z coordinate (22 bits)
+    /// - Bits 0-19: Y coordinate (20 bits)
+    ///
+    /// # Returns
+    /// A packed 64-bit integer representing this block position.
+    #[must_use]
+    pub const fn as_packed_chunk_pos(&self) -> i64 {
+        packed_chunk_pos(self)
+    }
+}
+
 impl<T> From<(T, T, T)> for Vector3<T> {
     fn from((x, y, z): (T, T, T)) -> Self {
         Self { x, y, z }
@@ -810,9 +826,40 @@ vector_codec_impl!(Vector3<T>, 3, x, y, z);
 pub const fn packed_chunk_pos(vec: &Vector3<i32>) -> i64 {
     let mut result = 0i64;
     // NOTE: Need to go to i64 first to conserve a sign.
-    result |= (vec.x as i64 & 0x03FF_FFFF) << 42;
-    result |= (vec.z as i64 & 0x003F_FFFF) << 20;
-    result |= vec.y as i64 & 0xFFFFF;
+    //do not simplfy, it's this way to make it clear what it does
+    //                        << (64-S)    >> P
+    //S is how many bits should be stored
+    //P is how many bits back it should be stored, taken by adding the S of the values above
+    result |= ((vec.x as i64) << (64-22)) >> 0;
+    result |= ((vec.z as i64) << (64-22)) >> (22);
+    result |= ((vec.y as i64) << (64-20)) >> (22+22);
+    result
+}
+
+/// Packs a block position vector into a single 64-bit integer.
+///
+/// The packing format is:
+/// - Bits 38-63: X coordinate (26 bits)
+/// - Bits 12-37: Z coordinate (26 bits)
+/// - Bits 0-11: Y coordinate (12 bits)
+///
+/// # Arguments
+/// - `vec` – The block position vector to pack.
+///
+/// # Returns
+/// A packed 64-bit integer containing the encoded position.
+#[inline]
+#[must_use]
+pub const fn packed_block_pos(vec: &Vector3<i32>) -> i64 {
+    let mut result = 0i64;
+    // NOTE: Need to go to i64 first to conserve a sign.
+    //do not simplfy, it's this way to make it clear what it does
+    //                        << (64-S)    >> P
+    //S is how many bits should be stored
+    //P is how many bits back it should be stored, taken by adding the S of the values above
+    result |= ((vec.x as i64) << (64-26)) >> 0;
+    result |= ((vec.z as i64) << (64-26)) >> (26);
+    result |= ((vec.y as i64) << (64-12)) >> (26+26);
     result
 }
 

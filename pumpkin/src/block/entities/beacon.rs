@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_nbt::compound::NbtCompound;
-use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::bounding_box::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use tokio::sync::Mutex;
 

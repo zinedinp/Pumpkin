@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 pub mod atomic_f32;
 pub mod bit_storage;
 pub mod block_box;
-pub mod boundingbox;
+pub mod bounding_box;
 pub mod bounds;
 pub mod euler_angle;
 pub mod experience;

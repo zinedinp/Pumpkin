@@ -13,7 +13,7 @@ use pumpkin_data::meta_data_type::MetaDataType;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tracked_data::TrackedData;
 use pumpkin_protocol::java::client::play::Metadata;
-use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::bounding_box::BoundingBox;
 use pumpkin_util::math::vector3::Vector3;
 
 pub struct FishingBobberEntity {

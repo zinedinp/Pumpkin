@@ -9,7 +9,7 @@ use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::{Block, BlockId};
 use pumpkin_protocol::java::client::play::CWorldEvent;
 use pumpkin_util::math::vector3::Vector3;
-use pumpkin_util::math::{boundingbox::BoundingBox, vector2::Vector2};
+use pumpkin_util::math::{bounding_box::BoundingBox, vector2::Vector2};
 use pumpkin_util::math::{position::BlockPos, vector2::to_chunk_pos};
 use pumpkin_world::world::BlockFlags;
 use tokio::sync::RwLock;

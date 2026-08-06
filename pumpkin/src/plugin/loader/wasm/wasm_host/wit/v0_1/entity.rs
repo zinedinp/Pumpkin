@@ -549,7 +549,7 @@ impl HostEntity for PluginHostState {
     ) -> wasmtime::Result<Vec<Resource<Entity>>> {
         let entity = entity_from_resource(self, &entity)?;
         let pos = entity.get_entity().pos.load();
-        let box_range = pumpkin_util::math::boundingbox::BoundingBox::new(
+        let box_range = pumpkin_util::math::bounding_box::BoundingBox::new(
             Vector3::new(pos.x - x, pos.y - y, pos.z - z),
             Vector3::new(pos.x + x, pos.y + y, pos.z + z),
         );

@@ -20,7 +20,7 @@ use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_protocol::IdOr;
 use pumpkin_protocol::java::client::play::CEntityVelocity;
 use pumpkin_protocol::java::client::play::CSoundEffect;
-use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::bounding_box::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
@@ -644,7 +644,7 @@ impl ArrowEntity {
 fn calculate_ray_intersection(
     start: &Vector3<f64>,
     dir: &Vector3<f64>,
-    bb: &pumpkin_util::math::boundingbox::BoundingBox,
+    bb: &pumpkin_util::math::bounding_box::BoundingBox,
 ) -> Option<f64> {
     let mut t_min = 0.0f64;
     let mut t_max = 1.0f64;

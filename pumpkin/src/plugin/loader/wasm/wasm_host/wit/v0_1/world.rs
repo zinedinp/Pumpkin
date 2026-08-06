@@ -74,7 +74,7 @@ pub(crate) const fn to_wit_noteblock_instrument(
 }
 
 pub(crate) const fn to_wit_bounding_box(
-    bb: pumpkin_util::math::boundingbox::BoundingBox,
+    bb: pumpkin_util::math::bounding_box::BoundingBox,
 ) -> WitBoundingBox {
     WitBoundingBox {
         min: (bb.min.x, bb.min.y, bb.min.z),

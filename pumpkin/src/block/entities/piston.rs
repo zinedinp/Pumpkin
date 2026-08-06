@@ -4,7 +4,7 @@ use std::{pin::Pin, sync::Arc};
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{Block, BlockDirection, BlockState};
 use pumpkin_nbt::compound::NbtCompound;
-use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
+use pumpkin_util::math::{bounding_box::BoundingBox, position::BlockPos, vector3::Vector3};
 
 use crate::world::{BlockFlags, World};
 

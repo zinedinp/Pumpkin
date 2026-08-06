@@ -1,4 +1,4 @@
-use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
+use pumpkin_util::math::{bounding_box::BoundingBox, position::BlockPos, vector3::Vector3};
 
 use super::*;
 

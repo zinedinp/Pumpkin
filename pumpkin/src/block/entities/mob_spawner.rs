@@ -10,7 +10,7 @@ use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{entity::EntityType, world::WorldEvent};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::{
-    boundingbox::{BoundingBox, EntityDimensions},
+    bounding_box::{BoundingBox, EntityDimensions},
     position::BlockPos,
     vector3::Vector3,
 };

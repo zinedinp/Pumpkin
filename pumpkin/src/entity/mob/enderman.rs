@@ -25,7 +25,7 @@ use pumpkin_protocol::{
     codec::var_int::VarInt,
     java::client::play::{CEntityPositionSync, Metadata},
 };
-use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
+use pumpkin_util::math::{bounding_box::BoundingBox, position::BlockPos, vector3::Vector3};
 use rand::RngExt;
 
 use crate::entity::{

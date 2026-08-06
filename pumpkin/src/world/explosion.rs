@@ -3,9 +3,10 @@ use std::sync::Arc;
 use pumpkin_data::{
     Block, BlockState, BlockStateId, damage::DamageType, entity::EntityType, fluid::Fluid,
 };
-use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
+use pumpkin_util::math::{bounding_box::BoundingBox, position::BlockPos, vector3::Vector3};
 use pumpkin_world::chunk::ChunkData;
 use rustc_hash::FxHashMap;
+use tracing::info;
 
 use crate::{
     block::{ExplodeArgs, drop_loot},
@@ -156,7 +157,10 @@ impl Explosion {
         let entities = world.get_all_at_box(&search_box);
 
         for entity_base in entities {
-            if entity_base.is_immune_to_explosion() {
+            if entity_base.is_immune_to_explosion()
+                && entity_base.get_entity().entity_type != &EntityType::TNT
+            {
+                // info!("{:#?}",entity_base.get_entity().entity_type);
                 continue;
             }
 

@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use crate::{
     BlockDirection,
     math::{
@@ -16,6 +18,10 @@ pub struct BlockBox {
     /// The maximum corner of the box (inclusive).
     pub max: Vector3<i32>,
 }
+
+//a small wrapper around BlockBox, made to make it explict that the cords used are subchunk cords rather than block cords.
+#[derive(Clone, Copy, Debug)]
+pub struct ChunkBox(BlockBox);
 
 impl BlockBox {
     /// Creates a new box from min/max coordinates.
@@ -177,7 +183,7 @@ impl BlockBox {
         self.contains(pos.x, pos.y, pos.z)
     }
 
-    /// Returns `true` if the box contains the given coordinates.
+    /// Returns `true` if the box contains the given coordinates. (inclusive)
     ///
     /// # Arguments
     /// * `x`, `y`, `z` – Coordinates to test.
@@ -299,3 +305,121 @@ impl FlatTryFrom<IntStream> for BlockBox {
 }
 
 comap_flat_map_codec_impl!(IntStream => BlockBox, BlockBox::flat_try_from, IntStream::from);
+
+impl ChunkBox {
+    /// Creates a new box from min/max coordinates.
+    ///
+    /// # Arguments
+    /// * `min_x` – Minimum X coordinate (inclusive).
+    /// * `min_y` – Minimum Y coordinate (inclusive).
+    /// * `min_z` – Minimum Z coordinate (inclusive).
+    /// * `max_x` – Maximum X coordinate (inclusive).
+    /// * `max_y` – Maximum Y coordinate (inclusive).
+    /// * `max_z` – Maximum Z coordinate (inclusive).
+    #[must_use]
+    pub const fn new(
+        min_x: i32,
+        min_y: i32,
+        min_z: i32,
+        max_x: i32,
+        max_y: i32,
+        max_z: i32,
+    ) -> Self {
+        Self(BlockBox::new(min_x, min_y, min_z, max_x, max_y, max_z))
+    }
+
+    /// Creates a box along an axis with specified dimensions.
+    ///
+    /// # Arguments
+    /// * `x`, `y`, `z` – Starting coordinates.
+    /// * `axis` – Axis along which the box extends.
+    /// * `width`, `height`, `depth` – Dimensions of the box.
+    #[must_use]
+    pub fn create_box(
+        x: i32,
+        y: i32,
+        z: i32,
+        axis: Axis,
+        width: i32,
+        height: i32,
+        depth: i32,
+    ) -> Self {
+        Self(BlockBox::create_box(x, y, z, axis, width, height, depth))
+    }
+
+    /// Creates a rotated box from offsets and size.
+    ///
+    /// # Arguments
+    /// * `x`, `y`, `z` – Base coordinates.
+    /// * `offset_x`, `offset_y`, `offset_z` – Offsets from base.
+    /// * `size_x`, `size_y`, `size_z` – Dimensions.
+    /// * `facing` – Facing direction.
+    #[expect(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn rotated(
+        x: i32,
+        y: i32,
+        z: i32,
+        offset_x: i32,
+        offset_y: i32,
+        offset_z: i32,
+        size_x: i32,
+        size_y: i32,
+        size_z: i32,
+        facing: &BlockDirection,
+    ) -> Self {
+        Self(BlockBox::rotated(
+            x, y, z, offset_x, offset_y, offset_z, size_x, size_y, size_z, facing,
+        ))
+    }
+
+    /// Creates a box covering a single block position.
+    ///
+    /// # Arguments
+    /// * `pos` – Block position.
+    #[must_use]
+    pub const fn from_pos(pos: BlockPos) -> Self {
+        Self(BlockBox::from_pos(pos))
+    }
+
+    /// Returns a box covering all boxes in an iterator.
+    ///
+    /// # Arguments
+    /// * `boxes` – Iterator of boxes.
+    /// # Returns
+    /// * `Some(Box)` covering all boxes, or `None` if empty.
+    pub fn encompass_all<I>(boxes: I) -> Option<Self>
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        BlockBox::encompass_all(boxes.into_iter().map(|val| val.0)).and_then(|val| Some(Self(val)))
+    }
+}
+
+impl From<&ChunkBox> for IntStream {
+    fn from(value: &ChunkBox) -> Self {
+        IntStream::from(&value.0)
+    }
+}
+
+impl FlatTryFrom<IntStream> for ChunkBox {
+    fn flat_try_from(value: IntStream) -> DataResult<Self> {
+        BlockBox::flat_try_from(value).flat_map(|val| DataResult::new_success(Self(val)))
+    }
+}
+
+impl Deref for ChunkBox {
+    type Target = BlockBox;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for ChunkBox {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+comap_flat_map_codec_impl!(IntStream => ChunkBox, ChunkBox::flat_try_from, IntStream::from);

@@ -59,7 +59,7 @@ use pumpkin_protocol::{
 };
 use pumpkin_util::math::vector3::Axis;
 use pumpkin_util::math::{
-    boundingbox::{BoundingBox, EntityDimensions},
+    bounding_box::{BoundingBox, EntityDimensions},
     get_section_cord,
     position::BlockPos,
     vector2::Vector2,
@@ -612,6 +612,10 @@ pub trait EntityBase: Send + Sync + NBTStorage + std::any::Any {
 
     fn get_player(&self) -> Option<&Player> {
         None
+    }
+
+    fn get_packed_chunk_cord(&self) -> i64 {
+        self.get_entity().pos.load().to_block_pos().as_long()
     }
 
     /// Should return the name of the entity without click or hover events.

@@ -15,6 +15,8 @@ use pumpkin_protocol::java::client::play::Metadata;
 use pumpkin_util::math::atomic_f32::AtomicF32;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering::{AcqRel, Relaxed};
+use tokio::time::Instant;
+use tracing::info;
 
 use std::sync::{
     Arc,
@@ -130,6 +132,7 @@ impl ItemEntity {
         let bounding_box = self.entity.bounding_box.load().expand(0.5, 0.0, 0.5);
 
         let world = self.entity.world.load();
+        // world.get_entities_at_box(&bounding_box);
         let entities = world.entities.load();
         let items = entities.iter().filter_map(|entity: &Arc<dyn EntityBase>| {
             entity.clone().get_item_entity().filter(|item| {
@@ -290,6 +293,13 @@ impl ItemEntity {
     async fn should_tick_move(&self, move_velo: Vector3<f64>) -> Option<bool> {
         let entity = &self.entity;
 
+        // let tick_move_check = !entity.on_ground.load(Ordering::SeqCst);
+        // let tick_move_hor = move_velo.horizontal_length_squared() > 1.0e-5;
+
+        // eprintln!(
+        //     "on ground - {} | hor dist - {}",
+        //     tick_move_check, tick_move_hor
+        // );
         let mut tick_move = !entity.on_ground.load(Ordering::SeqCst)
             || move_velo.horizontal_length_squared() > 1.0e-5;
 
@@ -319,12 +329,11 @@ impl ItemEntity {
         let mut friction = 0.98;
         let on_ground = entity.on_ground.load(Ordering::SeqCst);
 
-        let mut velo = entity.velocity.load();
         if on_ground {
             let block_affecting_velo = entity.get_block_with_y_offset(0.999_999).1;
             friction *= f64::from(block_affecting_velo.slipperiness) * 0.98;
         }
-
+        let mut velo = entity.velocity.load();
         velo = velo.multiply(friction, 0.98, friction);
 
         if on_ground && velo.y < 0.0 {
@@ -347,6 +356,9 @@ impl ItemEntity {
             return false;
         }
 
+
+        //if the item moved in the last tick then check every 2 ticks for merging
+        // otherwise check every 40 ticks (2 secs)
         let n = if entity
             .last_pos
             .load()
@@ -441,6 +453,7 @@ impl EntityBase for ItemEntity {
         server: &'a Server,
     ) -> EntityBaseFuture<'a, ()> {
         Box::pin(async move {
+            let start = Instant::now();
             let entity = &self.entity;
             self.decrement_pickup_delay();
 
@@ -453,18 +466,55 @@ impl EntityBase for ItemEntity {
 
             let move_velo = entity.velocity.load(); // In case push_out_of_blocks modifies it
 
-            let Some(tick_move) = self.should_tick_move(move_velo).await else {
+            let tmp: u64 = start.elapsed().as_nanos() as u64;
+            // eprintln!("{} nanos for item1", tmp);
+            let tick_move = {
+                let mut tick_move = !entity.on_ground.load(Ordering::Relaxed)
+                    || move_velo.horizontal_length_squared() > 1.0e-5;
+                // eprintln!(
+                    // "{} nanos for item1-check",
+                    // start.elapsed().as_nanos() as u64
+                // );
+                if !tick_move {
+                    if let Ok(item_age) = i32::try_from(self.item_age.load(Ordering::Relaxed)) {
+                        // eprintln!(
+                        //     "{} nanos for item1-force",
+                        //     start.elapsed().as_nanos() as u64
+                        // );
+                        tick_move = (item_age + entity.entity_id) % 4 == 0;
+                        tick_move
+                    } else {
+                        // eprintln!("doing a kill");
+                        entity.remove().await;
                 return;
+                    }
+                } else {
+                    true
+                }
             };
 
             if tick_move {
+                // eprintln!("{} nanos for item2", start.elapsed().as_nanos() as u64);
+                let tmp: u64 = start.elapsed().as_nanos() as u64;
+                // eprintln!("{} nanos for item2-bench", tmp);
                 self.move_and_apply_friction(caller, server, move_velo)
                     .await;
+                // eprintln!(" moving");
             }
+            let tmp: u64 = start.elapsed().as_nanos() as u64;
+            // eprintln!("{} nanos for item3", tmp);
 
             if self.process_age_and_merge().await {
+                let tmp: u64 = start.elapsed().as_nanos() as u64;
+                // eprintln!("{} nanos for item3-merge", tmp);
+
                 self.sync_motion_if_dirty(caller, original_velo).await;
+
+                let tmp: u64 = start.elapsed().as_nanos() as u64;
+                // eprintln!("{} nanos for item3-sync", tmp);
             }
+            let tmp: u64 = start.elapsed().as_nanos() as u64;
+            // eprintln!("{} nanos for item4", tmp);
         })
     }
 

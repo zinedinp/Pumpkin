@@ -8,7 +8,7 @@ use pumpkin_data::{
     },
 };
 use pumpkin_macros::pumpkin_block;
-use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos};
+use pumpkin_util::math::{bounding_box::BoundingBox, position::BlockPos};
 use pumpkin_world::{tick::TickPriority, world::BlockFlags};
 
 use crate::{

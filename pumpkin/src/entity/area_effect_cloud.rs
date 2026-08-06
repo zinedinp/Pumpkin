@@ -6,7 +6,7 @@ use crate::{
     server::Server,
 };
 use pumpkin_data::effect::StatusEffect;
-use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::bounding_box::BoundingBox;
 use pumpkin_util::math::vector3::Vector3;
 
 type EffectEntry = (&'static StatusEffect, i32, u8, bool, bool, bool);
