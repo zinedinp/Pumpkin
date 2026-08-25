@@ -68,14 +68,15 @@ use pumpkin_util::math::{
 };
 use pumpkin_util::text::TextComponent;
 use pumpkin_util::text::hover::HoverEvent;
-use std::collections::{BTreeMap, HashSet};
+use tracing::info;
 use std::pin::Pin;
-use std::sync::{
-    Arc,
-    atomic::{
-        AtomicBool, AtomicI32, AtomicU8, AtomicU32,
-        Ordering::{self, Relaxed},
-    },
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicU8, AtomicU32,
+    Ordering::{self, Relaxed},
+};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -1281,7 +1282,20 @@ impl Entity {
                         get_section_cord(new_block_pos.z),
                     ));
                 }
+                if pos.floor_to_i32().as_packed_chunk_pos()
+                != new_position.floor_to_i32().as_packed_chunk_pos()
+            {
+                // info!("Pos : {:?}",pos);
+                // info!("New Pos : {:?}",new_position);
+                // info!("Pos Packed: {:?}",pos.floor_to_i32().as_packed_chunk_pos());
+                // info!("New Pos Packed: {:?}",new_position.floor_to_i32().as_packed_chunk_pos());
+                self.world
+                    .load()
+                    .entity_lookup_cache
+                    .move_entity(pos, new_position,self.entity_uuid);
             }
+            }
+            
         }
     }
 

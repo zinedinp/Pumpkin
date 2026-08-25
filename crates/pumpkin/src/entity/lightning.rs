@@ -7,7 +7,7 @@ use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::world::WorldEvent;
 use pumpkin_data::{Block, BlockId, BlockStateId};
 use pumpkin_util::Difficulty;
-use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::bounding_box::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::world::BlockFlags;

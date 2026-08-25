@@ -532,7 +532,19 @@ impl Vector3<i32> {
     /// A packed 64-bit integer representing this block position.
     #[must_use]
     pub const fn as_packed_chunk_pos(&self) -> i64 {
-        packed_chunk_pos(self)
+        packed_chunk_pos(&self.as_chunk_pos())
+    }
+}
+
+impl Vector3<i32> {
+    /// divides all cords by 16
+    #[must_use]
+    pub const fn as_chunk_pos(&self) -> Vector3<i32> {
+        Vector3 {
+            x: self.x >> 4,
+            y: self.y >> 4,
+            z: self.z >> 4,
+        }
     }
 }
 
@@ -823,6 +835,7 @@ vector_codec_impl!(Vector3<T>, 3, x, y, z);
 /// A packed 64-bit integer containing the encoded position.
 #[inline]
 #[must_use]
+#[allow(clippy::identity_op)]
 pub const fn packed_chunk_pos(vec: &Vector3<i32>) -> i64 {
     let mut result = 0i64;
     // NOTE: Need to go to i64 first to conserve a sign.
@@ -830,9 +843,10 @@ pub const fn packed_chunk_pos(vec: &Vector3<i32>) -> i64 {
     //                        << (64-S)    >> P
     //S is how many bits should be stored
     //P is how many bits back it should be stored, taken by adding the S of the values above
-    result |= ((vec.x as i64) << (64-22)) >> 0;
-    result |= ((vec.z as i64) << (64-22)) >> (22);
-    result |= ((vec.y as i64) << (64-20)) >> (22+22);
+
+    result |= ((vec.x as i64) << (64 - 22)) >> 0;
+    result |= ((vec.z as i64) << (64 - 22)) >> (22);
+    result |= ((vec.y as i64) << (64 - 20)) >> (22 + 22);
     result
 }
 
@@ -850,6 +864,7 @@ pub const fn packed_chunk_pos(vec: &Vector3<i32>) -> i64 {
 /// A packed 64-bit integer containing the encoded position.
 #[inline]
 #[must_use]
+#[allow(clippy::identity_op)]
 pub const fn packed_block_pos(vec: &Vector3<i32>) -> i64 {
     let mut result = 0i64;
     // NOTE: Need to go to i64 first to conserve a sign.
@@ -857,9 +872,9 @@ pub const fn packed_block_pos(vec: &Vector3<i32>) -> i64 {
     //                        << (64-S)    >> P
     //S is how many bits should be stored
     //P is how many bits back it should be stored, taken by adding the S of the values above
-    result |= ((vec.x as i64) << (64-26)) >> 0;
-    result |= ((vec.z as i64) << (64-26)) >> (26);
-    result |= ((vec.y as i64) << (64-12)) >> (26+26);
+    result |= ((vec.x as i64) << (64 - 26)) >> 0;
+    result |= ((vec.z as i64) << (64 - 26)) >> (26);
+    result |= ((vec.y as i64) << (64 - 12)) >> (26 + 26);
     result
 }
 

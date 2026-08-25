@@ -17,6 +17,7 @@ members = [
     "tools/pumpkin-codegen",
     "tools/pumpkin-fuzzer",
 ]
+default-members = ["crates/pumpkin"]
 
 # [workspace.lints.rust]
 # missing_docs = "warn"

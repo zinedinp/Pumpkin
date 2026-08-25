@@ -392,7 +392,7 @@ impl ChunkBox {
     where
         I: IntoIterator<Item = Self>,
     {
-        BlockBox::encompass_all(boxes.into_iter().map(|val| val.0)).and_then(|val| Some(Self(val)))
+        BlockBox::encompass_all(boxes.into_iter().map(|val| val.0)).map(|val| Self(val))
     }
 }
 

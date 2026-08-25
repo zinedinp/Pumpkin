@@ -4,6 +4,7 @@ use core::f32;
 use pumpkin_data::Block;
 use pumpkin_protocol::{codec::var_int::VarInt, java::client::play::Metadata};
 use pumpkin_util::math::vector3::Vector3;
+use tracing::info;
 use std::{
     f64::consts::TAU,
     sync::{
@@ -64,6 +65,7 @@ impl EntityBase for TNTEntity {
 
             if fuse <= 1 {
                 // TNT explodes now
+                info!("killing tnt - {}",entity.entity_id);
                 self.entity.remove().await;
                 self.entity
                     .world

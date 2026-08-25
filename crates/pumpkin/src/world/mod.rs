@@ -1367,7 +1367,7 @@ impl World {
             dragon_fight::DragonFight::tick(fight_mutex, self).await;
         }
 
-        self.entity_lookup_cache.apply_queued_ops().await;
+        self.entity_lookup_cache.clean().await;
         let total_elapsed = start.elapsed();
         if total_elapsed.as_millis() > 50 {
             debug!(
@@ -4276,11 +4276,12 @@ impl World {
                         world.entities.rcu(|current_entities| {
                             let mut new_entities = (**current_entities).clone();
                             new_entities.extend(entities_to_add.iter().cloned());
-                            world.entity_lookup_cache.add_entities(entities_to_add.iter()
-                            .map(|entity| Arc::downgrade(entity)).collect::<Vec<Weak<dyn EntityBase>>>());
+                            
                             //CACHEPOINTHERE
                             new_entities
                         });
+                        world.entity_lookup_cache.add_entities(entities_to_add.iter()
+                            .cloned().collect::<Vec<Arc<dyn EntityBase>>>());
                     }
                 } else {
                     // The chunk's entities are already live (another watcher loaded
@@ -4611,6 +4612,7 @@ impl World {
     pub fn add_player(&self, player: &Arc<Player>) -> Result<(), String> {
         self.players.rcu(|current_list| {
             let mut new_list = (**current_list).clone();
+            self.entity_lookup_cache.add_entity(player.clone() as Arc<dyn EntityBase>);
             new_list.push(player.clone());
             new_list
         });
@@ -4657,6 +4659,7 @@ impl World {
         if let Some(ref player) = removed_player {
             let uuid = player.gameprofile.id;
             let entity_id = player.entity_id();
+            self.entity_lookup_cache.remove_entity(player.position(), player.get_entity().entity_uuid.clone());
 
             let bedrock_remove_player = CPlayerList {
                 action: CPlayerList::ACTION_REMOVE,
@@ -4717,9 +4720,14 @@ impl World {
             let mut new_entities = (**current_entities).clone();
             new_entities.push(entity.clone());
             //CACHEPOINTFinish
-            self.entity_lookup_cache.add_entity(Arc::downgrade(entity));
+            
             new_entities
         });
+        self.entity_lookup_cache.add_entity(entity.clone());
+        // tokio::runtime::Handle::current().block_on( async {
+        //     self.entity_lookup_cache.add_entity(entity.clone()).await;
+        // });
+        
     }
 
     pub async fn spawn_entity(self: &Arc<Self>, entity: Arc<dyn EntityBase>) {
@@ -4782,9 +4790,10 @@ impl World {
             let mut new_entities = (**current_entities).clone();
             new_entities.push(entity.clone());
             //CACHEPOINTFinish
-            self.entity_lookup_cache.add_entity(Arc::downgrade(&entity));
+            
             new_entities
         });
+        self.entity_lookup_cache.add_entity(entity.clone());
     }
 
     #[allow(clippy::unused_async)]
@@ -4797,6 +4806,7 @@ impl World {
         {
             return;
         }
+        self.entity_lookup_cache.remove_entity(entity.get_entity().pos.load().clone(),entity.get_entity().entity_uuid.clone());
         base_entity.removed.store(true, Ordering::Release);
 
         self.spawn_state.load().remove_entity(self, entity);
@@ -4809,7 +4819,7 @@ impl World {
             {
                 new_entities.swap_remove(index);
                 //CACHEPOINTFinish
-                self.entity_lookup_cache.remove_entity(entity);
+                
             } else {
                 error!(
                     "tried to remove entity from world when that entity didn't exist in that world"
@@ -4818,6 +4828,7 @@ impl World {
 
             new_entities
         });
+        
 
         let chunk_pos = base_entity.chunk_pos.load();
         self.broadcast_to_chunk_editioned_sync(
@@ -4855,7 +4866,7 @@ impl World {
         });
 
         for entity in entities_to_remove {
-            self.entity_lookup_cache.remove_entity(entity.as_ref());
+            self.entity_lookup_cache.remove_entity(entity.get_entity().pos.load(),entity.get_entity().entity_uuid);
             self.save_entity(&entity).await;
             self.spawn_state.load().remove_entity(self, entity.as_ref());
         }

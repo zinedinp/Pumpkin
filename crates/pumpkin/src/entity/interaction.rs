@@ -9,7 +9,7 @@ use pumpkin_data::{damage::DamageType, item_stack::ItemStack};
 use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_protocol::java::client::play::Metadata;
 use pumpkin_util::math::{
-    boundingbox::{BoundingBox, EntityDimensions},
+    bounding_box::{BoundingBox, EntityDimensions},
     vector3::Vector3,
 };
 

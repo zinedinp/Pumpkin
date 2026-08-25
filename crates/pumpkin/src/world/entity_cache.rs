@@ -1,7 +1,8 @@
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     pin::Pin,
     sync::{Arc, Weak},
+    time::Instant,
 };
 
 use dashmap::{DashMap, DashSet};
@@ -16,8 +17,9 @@ use rayon::iter::{
 use tokio::{
     pin,
     sync::{
-        Mutex, RwLock,
+        Mutex, Notify, RwLock,
         mpsc::{UnboundedReceiver, UnboundedSender},
+        oneshot,
     },
 };
 use tracing::{error, info, warn};
@@ -36,15 +38,193 @@ a write queue like we have now, this requires a point in time where syncing is d
 
 */
 
-
-
-pub struct EntityCache {
-    tracking_section_map: DashMap<i64, EntityCacheChunk>,
-    chunk_index_tree: RwLock<BTreeSet<i64>>,
-    queued_ops_tx: UnboundedSender<CacheOp>,
-    queued_ops_rx: Mutex<UnboundedReceiver<CacheOp>>,
+async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
+    let mut tracking_section_map: HashMap<i64, EntityCacheChunk> = HashMap::new();
+    let mut chunk_index_tree: BTreeSet<i64> = BTreeSet::new();
+    let mut dirty_subchunk_indexs: BTreeSet<i64> = BTreeSet::new();
+    let mut i = 0;
+    let id = rand::random_range(0..=1000);
+    loop {
+        i += 1;
+        let Some(cache_op) = rx.recv().await else {
+            break;
+        };
+        // info!("{} - starting op {:?} - {}",id,&cache_op,i);
+        match cache_op {
+            CacheOp::Add { entity } => {
+                // let entity: Option<Arc<dyn EntityBase>> = entity.upgrade();
+                // if entity.is_none() {
+                //     continue
+                // }
+                // let entity = entity.expect("msg");
+                
+                let Some(entity): Option<Arc<dyn EntityBase>> = entity.upgrade() else {
+                    info!("A - lost ref");
+                    continue;
+                };
+                if Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity.get_entity().entity_uuid {
+                    info!("added player to cache");
+                }
+                // info!(
+                //     "add entity - {:#?}",
+                //     entity.get_entity().entity_type.resource_name
+                // );
+                let pos = entity
+                    .get_entity()
+                    .pos
+                    .load()
+                    .floor_to_i32()
+                    .as_packed_chunk_pos();
+                chunk_index_tree.insert(pos);
+                let subchunk = tracking_section_map.entry(pos).or_default();
+                subchunk
+                    .entities
+                    .push((Arc::downgrade(&entity), entity.get_entity().entity_uuid));
+            }
+            CacheOp::AddMany { entities } => {
+                for entity in entities {
+                    let Some(entity): Option<Arc<dyn EntityBase>> = entity.upgrade() else {
+                        info!("AM - lost ref");
+                        continue;
+                    };
+                    if Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity.get_entity().entity_uuid {
+                    info!("added player to cache");
+                }
+                    // info!(
+                    //     "add entity - {:#?}",
+                    //     entity.get_entity().entity_type.resource_name
+                    // );
+                    let pos = entity
+                        .get_entity()
+                        .pos
+                        .load()
+                        .floor_to_i32()
+                        .as_packed_chunk_pos();
+                    chunk_index_tree.insert(pos);
+                    let subchunk = tracking_section_map.entry(pos).or_default();
+                    subchunk
+                        .entities
+                        .push((Arc::downgrade(&entity), entity.get_entity().entity_uuid));
+                }
+            }
+            CacheOp::Remove { pos, entity_uuid } => {
+                // info!("remove entity - {}", entity_uuid);
+                let pos = pos.floor_to_i32().as_packed_chunk_pos();
+                let Some(mut subchunk) = tracking_section_map.get_mut(&pos) else {
+                    warn!(
+                        "R - tried to remove entity from subchunk that didn't exist in the cache map"
+                    );
+                    continue;
+                };
+                let Some(index) = subchunk.entities.iter().position(|e| e.1 == entity_uuid) else {
+                    warn!("R - couldn't find entity in subchunk cache");
+                    continue;
+                };
+                subchunk.entities.swap_remove(index);
+                dirty_subchunk_indexs.insert(pos);
+            }
+            CacheOp::Move {
+                old_pos,
+                new_pos,
+                entity_uuid,
+            } => {
+                // let entity: Option<Arc<dyn EntityBase>> = entity.upgrade();
+                // info!("remove entity - {}", entity_uuid);
+                let is_player = Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity_uuid;
+                if is_player {
+                    info!("moving entity from {:?} to {:?}", old_pos, new_pos);
+                    info!(
+                        "C moving entity from {:?} to {:?}",
+                        old_pos.floor_to_i32().as_packed_chunk_pos(),
+                        new_pos.floor_to_i32().as_packed_chunk_pos()
+                    );
+                }
+                let pos = old_pos.floor_to_i32().as_packed_chunk_pos();
+                let Some(mut subchunk) = tracking_section_map.get_mut(&pos) else {
+                    warn!(
+                        "M - tried to remove entity from subchunk that didn't exist in the cache map"
+                    );
+                    continue;
+                };
+                let Some(index) = subchunk.entities.iter().position(|e| e.1 == entity_uuid) else {
+                    warn!("M - couldn't find entity in subchunk cache");
+                    continue;
+                };
+                let (entity, _entity_uuid) = subchunk.entities.swap_remove(index);
+                dirty_subchunk_indexs.insert(pos);
+                // self.dirty_subchunks_tx.send(pos).inspect_err(|er| {
+                // error!(
+                //     "couldn't send dirty subchunk index in entity cache through channel - {:#?}",
+                //     er
+                // );
+                let Some(entity): Option<Arc<dyn EntityBase>> = entity.upgrade() else {
+                    info!("M - lost ref");
+                    continue;
+                };
+                // info!(
+                //     "add entity - {:#?}",
+                //     entity.get_entity().entity_type.resource_name
+                // );
+                let pos = new_pos.floor_to_i32().as_packed_chunk_pos();
+                chunk_index_tree.insert(pos);
+                let subchunk = tracking_section_map.entry(pos).or_default();
+                subchunk
+                    .entities
+                    .push((Arc::downgrade(&entity), entity_uuid));
+            }
+            CacheOp::CleanCache { is_done_callback } => {
+                // info!("cleaning cache");
+                let mut start = Instant::now();
+                let mut i = 0u64;
+                let mx = dirty_subchunk_indexs.len();
+                for idx in &dirty_subchunk_indexs {
+                    let subchunk_cache = tracking_section_map.get_mut(idx);
+                    let is_in_tree = chunk_index_tree.contains(idx);
+                    match (subchunk_cache, is_in_tree) {
+                        (None, true) => {
+                            chunk_index_tree.remove(idx);
+                        } //not in the cache but for some reason in the tree - remove from tree
+                        (None, false) => {} // not in cache and not in cache - it's fine, working as it should
+                        (Some(subchunk_cache), true) => {
+                            subchunk_cache.clean();
+                            if subchunk_cache.entities.is_empty() {
+                                // tracking_section_map.remove(idx);
+                                chunk_index_tree.remove(idx);
+                            }
+                        } // in cache and in tree - look through cache for invalid weaks and filter them out, check for empty cache and remove from tree if empty
+                        (Some(subchunk_cache), false) => {
+                            subchunk_cache.clean();
+                            if subchunk_cache.entities.is_empty() {
+                                // tracking_section_map.remove(idx);
+                            } else {
+                                chunk_index_tree.insert(*idx);
+                            }
+                        } //in cache but not in tree - clean cache like normal, check for empty cache, add back to tree if it still has something
+                    }
+                    if start.elapsed().as_secs() > 0 {
+                        warn!("still cleaning cache - {}/{}", i, mx);
+                        start = Instant::now()
+                    }
+                    i += 1;
+                }
+                dirty_subchunk_indexs.clear();
+                is_done_callback.notify_one();
+                // info!("cleaned cache");
+            }
+        };
+        // info!("{} - ran cache op {} left",id,rx.len());
+        // info!("{} - finished op {}",id,i);
+    }
+    info!(
+        "entity cache lookup actor has exited due to sender being dropped (likely the world was dropped)"
+    );
 }
 
+pub struct EntityCache {
+    actor_tx: UnboundedSender<CacheOp>,
+}
+
+#[derive(Debug)]
 enum CacheOp {
     Add {
         entity: Weak<dyn EntityBase>,
@@ -53,37 +233,41 @@ enum CacheOp {
         entities: Vec<Weak<dyn EntityBase>>,
     }, //
     Remove {
-        entity_pos: Vector3<f64>,
+        pos: Vector3<f64>,
+        entity_uuid: Uuid,
     },
     Move {
         old_pos: Vector3<f64>,
-        entity: Weak<dyn EntityBase>,
+        new_pos: Vector3<f64>,
+        entity_uuid: Uuid,
+    },
+    CleanCache {
+        is_done_callback: Arc<Notify>,
     },
 }
 
+// //packs cords into an i64
+// //22 bits for x and z
+// //20 bits for y
+// //packed as X Z Y
+// //logic taken from ChunkSectionPos.java
+// fn pack_chunk_cord(x: i32, y: i32, z: i32) -> i64 {
+//     ((x & 4194303i32) as i64) << 42
+//         | ((y & 1048575i32) as i64) << 0
+//         | ((z & 4194303i32) as i64) << 20
+// }
 
-//packs cords into an i64
-//22 bits for x and z
-//20 bits for y
-//packed as X Z Y
-//logic taken from ChunkSectionPos.java
-fn pack_chunk_cord(x: i32, y: i32, z: i32) -> i64 {
-    ((x & 4194303i32) as i64) << 42
-        | ((y & 1048575i32) as i64) << 0
-        | ((z & 4194303i32) as i64) << 20
-}
+// fn unpack_cord_x(packed_cord: i64) -> i32 {
+//     (packed_cord << 0 >> 42) as i32
+// }
 
-fn unpack_cord_x(packed_cord: i64) -> i32 {
-    (packed_cord << 0 >> 42) as i32
-}
+// fn unpack_cord_y(packed_cord: i64) -> i32 {
+//     (packed_cord << 44 >> 44) as i32
+// }
 
-fn unpack_cord_y(packed_cord: i64) -> i32 {
-    (packed_cord << 44 >> 44) as i32
-}
-
-fn unpack_cord_z(packed_cord: i64) -> i32 {
-    (packed_cord << 22 >> 42) as i32
-}
+// fn unpack_cord_z(packed_cord: i64) -> i32 {
+//     (packed_cord << 22 >> 42) as i32
+// }
 
 //logic taken from SectionedEntityCache.java
 //intended use - this is intended to be used in 2 phases, a read phrase and a write phase. all attemped writes and edits are queued till applied by a write phase call
@@ -92,208 +276,256 @@ impl EntityCache {
     pub fn new() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<CacheOp>();
         info!("made entitycache");
-        EntityCache {
-            tracking_section_map: DashMap::new(),
-            chunk_index_tree: RwLock::new(BTreeSet::new()),
-            queued_ops_tx: tx,
-            queued_ops_rx: Mutex::new(rx),
-        }
+        tokio::spawn(actor(rx));
+        EntityCache { actor_tx: tx }
     }
 
-    async fn for_each_in_box<F>(&self, bbox: BoundingBox, mut entity_cache_chunk_callback: F)
-    where
-        F: FnMut(
-            dashmap::mapref::one::Ref<'_, i64, EntityCacheChunk>,
-        ) -> Pin<Box<dyn Future<Output = ()> + Send>>,
-    {
-        let chunk_box = bbox.covered_chunks();
+    // async fn for_each_in_box<F>(&self, bbox: BoundingBox, mut entity_cache_chunk_callback: F)
+    // where
+    //     F: FnMut(
+    //         dashmap::mapref::one::Ref<'_, i64, EntityCacheChunk>,
+    //     ) -> Pin<Box<dyn Future<Output = ()> + Send>>,
+    // {
+    //     let chunk_box = bbox.covered_chunks();
 
-        let index_tree = self.chunk_index_tree.read().await;
-        let cache_chunk_iter = (chunk_box.min.x..=chunk_box.max.x)
-            .flat_map(|chunk_x| {
-                index_tree
-                    .range(
-                        packed_chunk_pos(&Vector3::new(chunk_x, 0, 0))
-                            ..=packed_chunk_pos(&Vector3::new(chunk_x, -1, -1)),
-                    )
-                    .filter(move |packed_chunk_cord| -> bool {
-                        let chunk_y = unpack_cord_y(**packed_chunk_cord);
-                        let chunk_z = unpack_cord_z(**packed_chunk_cord);
-                        chunk_box.contains(chunk_x, chunk_y, chunk_z)
-                    })
-            })
-            .filter_map(|packed_chunk_cord| self.tracking_section_map.get(packed_chunk_cord));
+    //     let index_tree = self.chunk_index_tree.read().await;
+    //     let cache_chunk_iter = (chunk_box.min.x..=chunk_box.max.x)
+    //         .flat_map(|chunk_x| {
+    //             index_tree
+    //                 .range(
+    //                     packed_chunk_pos(&Vector3::new(chunk_x, 0, 0))
+    //                         ..=packed_chunk_pos(&Vector3::new(chunk_x, -1, -1)),
+    //                 )
+    //                 .filter(move |packed_chunk_cord| -> bool {
+    //                     let chunk_y = unpack_cord_y(**packed_chunk_cord);
+    //                     let chunk_z = unpack_cord_z(**packed_chunk_cord);
+    //                     chunk_box.contains(chunk_x, chunk_y, chunk_z)
+    //                 })
+    //         })
+    //         .filter_map(|packed_chunk_cord| self.tracking_section_map.get(packed_chunk_cord));
 
-        for cache_chunk in cache_chunk_iter {
-            entity_cache_chunk_callback(cache_chunk).await;
-        }
-        //EXPLAINATION
-        /*
-        this cache contains 2 structs, a BTreeSet and a DashMap.
-        the BTreeSet contains packed chunk cords, a way representing a cord to a chunk in an i64.
-        the BTree is used to quickly check for and get an iter of cords of chunks we are tracking, this helps us to quickly take the huge space of chunks that a box could cover and cut it down to only the chunks we actually have info for.
-        we then use the resulting packed chunk cords on the DashMap to get structs storing refs to all the entities in that chunk.
-        all of this is done in an iter with a callback, yay for lazy iters
-         */
+    //     for cache_chunk in cache_chunk_iter {
+    //         entity_cache_chunk_callback(cache_chunk).await;
+    //     }
+    //     //EXPLAINATION
+    //     /*
+    //     this cache contains 2 structs, a BTreeSet and a DashMap.
+    //     the BTreeSet contains packed chunk cords, a way representing a cord to a chunk in an i64.
+    //     the BTree is used to quickly check for and get an iter of cords of chunks we are tracking, this helps us to quickly take the huge space of chunks that a box could cover and cut it down to only the chunks we actually have info for.
+    //     we then use the resulting packed chunk cords on the DashMap to get structs storing refs to all the entities in that chunk.
+    //     all of this is done in an iter with a callback, yay for lazy iters
+    //      */
+    // }
+
+    pub fn add_entity(&self, entity: Arc<dyn EntityBase>) {
+        self.actor_tx.send(CacheOp::Add {
+            entity: Arc::downgrade(&entity),
+        });
     }
 
-    pub fn add_entity(&self, entity: Weak<dyn EntityBase>) {
-        let tn: Arc<dyn EntityBase> = entity.upgrade().unwrap();
-        info!(
-            "add entity - {:#?}",
-            tn.get_entity().entity_type.resource_name
-        );
-        (self.queued_ops_tx.send(CacheOp::Add { entity }));
+    pub fn add_entities(&self, entities: Vec<Arc<dyn EntityBase>>) {
+        // info!("add {} entities", entities.len());
+        self.actor_tx.send(CacheOp::AddMany {
+            entities: entities.into_iter().map(|e| Arc::downgrade(&e)).collect(),
+        });
     }
 
-    pub fn add_entities(&self, entities: Vec<Weak<dyn EntityBase>>) {
-        info!("add {} entities", entities.len());
-        (self.queued_ops_tx.send(CacheOp::AddMany { entities }));
+    pub fn remove_entity(&self, pos: Vector3<f64>, entity_uuid: Uuid) {
+        // info!("remove entity - {}", entity_uuid);
+        self.actor_tx.send(CacheOp::Remove { pos, entity_uuid });
     }
 
-    pub fn remove_entity(&self, entity: &dyn EntityBase) {
-        info!(
-            "remove entity - {}",
-            entity.get_entity().entity_type.resource_name
-        );
-        (self.queued_ops_tx.send(CacheOp::Remove {
-            entity_pos: entity.get_entity().pos.load(),
-        }));
+    // async fn pop_entity(
+    //     &self,
+    //     pos: Vector3<f64>,
+    //     entity_uuid: Uuid,
+    // ) -> Option<Arc<dyn EntityBase>> {
+    //     info!("pop entity");
+    //     let packed_cord = pos.floor_to_i32().as_packed_chunk_pos();
+    //     let Some(mut subchunk) = self.tracking_section_map.get_mut(&packed_cord) else {
+    //         warn!("tried to remove entity from subchunk that didn't exist in the cache map");
+    //         return None;
+    //     };
+    //     let Some(index) = subchunk.entities.iter().position(|e| e.1 == entity_uuid) else {
+    //         warn!("couldn't find entity in subchunk cache");
+    //         return None;
+    //     };
+    //     let popped_entity = subchunk.entities.swap_remove(index);
+    //     self.dirty_subchunks_tx.send(packed_cord).inspect_err(|er| {
+    //         error!(
+    //             "couldn't send dirty subchunk index in entity cache through channel - {:#?}",
+    //             er
+    //         );
+    //     });
+    //     popped_entity.0.upgrade()
+    // }
+
+    pub fn move_entity(&self, old_pos: Vector3<f64>, new_pos: Vector3<f64>, entity_uuid: Uuid) {
+        // info!("move entity");
+        self.actor_tx.send(CacheOp::Move {
+            old_pos,
+            new_pos,
+            entity_uuid: entity_uuid,
+        });
     }
 
-    pub fn move_entity(&self, old_pos: Vector3<f64>, entity: Weak<dyn EntityBase>) {
-        info!("move entity");
-        (self.queued_ops_tx.send(CacheOp::Move { old_pos, entity }));
+    pub async fn clean(&self) {
+        let notifer = Arc::new(tokio::sync::Notify::new());
+        self.actor_tx.send(CacheOp::CleanCache {
+            is_done_callback: notifer.clone(),
+        });
+        // info!("cache clean callback - is termed : {}",rx.is_terminated());
+        // info!("cache clean callback - is empty : {}",rx.is_empty());
+        // let t = rx.await;
+        // info!("cache clean callback received");
+        // info!("cache clean callback response : {:#?}",t);
+        // info!("waiting for clean to finish");
+        notifer.notified().await;
+        // match t {
+        //     Ok(_) => info!("done good"),
+        //     Err(er) => info!("callback go bad : {}",er),
+        // }
     }
 
-    fn add(&self, packed_chunk_cord: i64, entity: Weak<dyn EntityBase>) {
-        let mut entity_cache_chunk = if let Some(entity_cache_chunk_tmp) =
-            self.tracking_section_map.get_mut(&packed_chunk_cord)
-        {
-            entity_cache_chunk_tmp
-        } else {
-            self.tracking_section_map
-                .insert(packed_chunk_cord, EntityCacheChunk::default());
-            self.tracking_section_map
-                .get_mut(&packed_chunk_cord)
-                .expect("we just inserted a blank one")
-        };
-        entity_cache_chunk.entities.push(entity);
-    }
+    // fn add(&self, packed_chunk_cord: i64, entity: Weak<dyn EntityBase>) {
+    //     let mut entity_cache_chunk = if let Some(entity_cache_chunk_tmp) =
+    //         self.tracking_section_map.get_mut(&packed_chunk_cord)
+    //     {
+    //         entity_cache_chunk_tmp
+    //     } else {
+    //         self.tracking_section_map
+    //             .insert(packed_chunk_cord, EntityCacheChunk::default());
+    //         self.tracking_section_map
+    //             .get_mut(&packed_chunk_cord)
+    //             .expect("we just inserted a blank one")
+    //     };
+    //     entity_cache_chunk.entities.push(entity);
+    // }
 
-    pub async fn apply_queued_ops(&self) {
-        let dirty_chunks: DashSet<i64> = DashSet::new();
-        let mut queued_ops_rx = self.queued_ops_rx.lock().await;
+    // pub async fn apply_queued_ops(&self) {
+    //     let dirty_chunks: DashSet<i64> = DashSet::new();
+    //     let mut queued_ops_rx = self.queued_ops_rx.lock().await;
 
-        if !queued_ops_rx.is_empty() {
-            let mut adds = 0;
-            let mut addsmults = 0;
-            let mut addsmultsamttotal = 0;
-            let mut removes = 0;
-            let mut moves = 0;
-            
-            let mut buf: Vec<CacheOp> = Vec::new();
-            info!("receiver says there are {} ops",queued_ops_rx.len());
-            let tmp = queued_ops_rx.recv_many(&mut buf, 10240).await;
-            info!("cache op gather returned {}",tmp);
-            info!("going through {} cache ops",buf.len());
-            drop(queued_ops_rx);
-            for op in buf {
-                match op {
-                    CacheOp::Add { entity } => {
-                        adds += 1;
-                        if let Some(packed_chunk_cord) = entity.upgrade().and_then(|ent| {
-                            Some(
-                                ent.get_entity()
-                                    .pos
-                                    .load()
-                                    .floor_to_i32()
-                                    .as_packed_chunk_pos(),
-                            )
-                        }) {
-                            self.add(packed_chunk_cord, entity);
-                        } else {
-                            warn!("tried to add entity that could not be upgraded");
-                        }
-                    }
-                    CacheOp::AddMany { entities } => {
-                        addsmults += 1;
-                        addsmultsamttotal += entities.len();
-                        entities
-                            .into_par_iter()
-                            .for_each(|entity: Weak<dyn EntityBase>| {
-                                if let Some(packed_chunk_cord) = entity.upgrade().and_then(|ent| {
-                                    Some(
-                                        ent.get_entity()
-                                            .pos
-                                            .load()
-                                            .floor_to_i32()
-                                            .as_packed_chunk_pos(),
-                                    )
-                                }) {
-                                    self.add(packed_chunk_cord, entity);
-                                } else {
-                                    warn!("tried to add entity that could not be upgraded");
-                                }
-                            })
-                    }
-                    CacheOp::Remove { entity_pos } => {
-                        removes += 1;
-                        let packed_chunk_cord = entity_pos.floor_to_i32().as_packed_chunk_pos();
-                        dirty_chunks.insert(packed_chunk_cord);
-                    }
-                    CacheOp::Move { old_pos, entity } => {
-                        moves += 1;
-                        //attempt removal of the entity from it's old position
-                        let packed_chunk_cord = old_pos.floor_to_i32().as_packed_chunk_pos();
-                        dirty_chunks.insert(packed_chunk_cord);
+    //     if !queued_ops_rx.is_empty() {
+    //         let mut adds = 0;
+    //         let mut addsmults = 0;
+    //         let mut addsmultsamttotal = 0;
+    //         let mut removes = 0;
+    //         let mut moves = 0;
 
-                        //attempt adding to it's new pos
-                        if let Some(packed_chunk_cord) = entity.upgrade().and_then(|ent| {
-                            Some(
-                                ent.get_entity()
-                                    .pos
-                                    .load()
-                                    .floor_to_i32()
-                                    .as_packed_chunk_pos(),
-                            )
-                        }) {
-                            self.add(packed_chunk_cord, entity);
-                        }
-                    }
-                }
-            }
-            info!("Added {} entities",adds);
-            info!("Added {} entities via {} vecs",addsmultsamttotal,addsmults);
-            info!("removed {} entities",removes);
-            info!("moved {} entities",moves);
-            info!("marked {} subchunks as dirt",dirty_chunks.len());
-            let mut removedEntitys = 0;
-            dirty_chunks.into_iter().for_each(|packed_chunk_cord| {
-                self.tracking_section_map
-                    .get_mut(&packed_chunk_cord)
-                    .and_then(|mut entity_tracking_chunk| -> Option<()> {
-                        let ol = entity_tracking_chunk.entities.len();
-                        entity_tracking_chunk.entities = entity_tracking_chunk
-                            .entities
-                            .par_iter()
-                            .filter(|entity| entity.upgrade().is_some())
-                            .cloned()
-                            .collect();
-                        removedEntitys+=entity_tracking_chunk.entities.len()-ol;
-                        None
-                    });
-            });
-            info!("removed {} entities from dirty subchunks",removedEntitys);
-            let ol = self.tracking_section_map.len();
-            self.tracking_section_map
-                .retain(|_, va| !va.entities.is_empty());
-            info!("removed {} empty subchunks",ol-self.tracking_section_map.len());
-        }
-    }
+    //         let mut buf: Vec<CacheOp> = Vec::new();
+    //         info!("receiver says there are {} ops",queued_ops_rx.len());
+    //         let tmp = queued_ops_rx.recv_many(&mut buf, 10240).await;
+    //         info!("cache op gather returned {}",tmp);
+    //         info!("going through {} cache ops",buf.len());
+    //         drop(queued_ops_rx);
+    //         for op in buf {
+    //             match op {
+    //                 CacheOp::Add { entity } => {
+    //                     adds += 1;
+    //                     if let Some(packed_chunk_cord) = entity.upgrade().and_then(|ent| {
+    //                         Some(
+    //                             ent.get_entity()
+    //                                 .pos
+    //                                 .load()
+    //                                 .floor_to_i32()
+    //                                 .as_packed_chunk_pos(),
+    //                         )
+    //                     }) {
+    //                         self.add(packed_chunk_cord, entity);
+    //                     } else {
+    //                         warn!("tried to add entity that could not be upgraded");
+    //                     }
+    //                 }
+    //                 CacheOp::AddMany { entities } => {
+    //                     addsmults += 1;
+    //                     addsmultsamttotal += entities.len();
+    //                     entities
+    //                         .into_par_iter()
+    //                         .for_each(|entity: Weak<dyn EntityBase>| {
+    //                             if let Some(packed_chunk_cord) = entity.upgrade().and_then(|ent| {
+    //                                 Some(
+    //                                     ent.get_entity()
+    //                                         .pos
+    //                                         .load()
+    //                                         .floor_to_i32()
+    //                                         .as_packed_chunk_pos(),
+    //                                 )
+    //                             }) {
+    //                                 self.add(packed_chunk_cord, entity);
+    //                             } else {
+    //                                 warn!("tried to add entity that could not be upgraded");
+    //                             }
+    //                         })
+    //                 }
+    //                 CacheOp::Remove { entity_pos } => {
+    //                     removes += 1;
+    //                     let packed_chunk_cord = entity_pos.floor_to_i32().as_packed_chunk_pos();
+    //                     dirty_chunks.insert(packed_chunk_cord);
+    //                 }
+    //                 CacheOp::Move { old_pos, entity } => {
+    //                     moves += 1;
+    //                     //attempt removal of the entity from it's old position
+    //                     let packed_chunk_cord = old_pos.floor_to_i32().as_packed_chunk_pos();
+    //                     dirty_chunks.insert(packed_chunk_cord);
+
+    //                     //attempt adding to it's new pos
+    //                     if let Some(packed_chunk_cord) = entity.upgrade().and_then(|ent| {
+    //                         Some(
+    //                             ent.get_entity()
+    //                                 .pos
+    //                                 .load()
+    //                                 .floor_to_i32()
+    //                                 .as_packed_chunk_pos(),
+    //                         )
+    //                     }) {
+    //                         self.add(packed_chunk_cord, entity);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         info!("Added {} entities",adds);
+    //         info!("Added {} entities via {} vecs",addsmultsamttotal,addsmults);
+    //         info!("removed {} entities",removes);
+    //         info!("moved {} entities",moves);
+    //         info!("marked {} subchunks as dirt",dirty_chunks.len());
+    //         let mut removedEntitys = 0;
+    //         dirty_chunks.into_iter().for_each(|packed_chunk_cord| {
+    //             self.tracking_section_map
+    //                 .get_mut(&packed_chunk_cord)
+    //                 .and_then(|mut entity_tracking_chunk| -> Option<()> {
+    //                     let ol = entity_tracking_chunk.entities.len();
+    //                     entity_tracking_chunk.entities = entity_tracking_chunk
+    //                         .entities
+    //                         .par_iter()
+    //                         .filter(|entity| entity.upgrade().is_some())
+    //                         .cloned()
+    //                         .collect();
+    //                     removedEntitys+=entity_tracking_chunk.entities.len()-ol;
+    //                     None
+    //                 });
+    //         });
+    //         info!("removed {} entities from dirty subchunks",removedEntitys);
+    //         let ol = self.tracking_section_map.len();
+    //         self.tracking_section_map
+    //             .retain(|_, va| !va.entities.is_empty());
+    //         info!("removed {} empty subchunks",ol-self.tracking_section_map.len());
+    //     }
+    // }
 }
 
 #[derive(Default)]
 pub struct EntityCacheChunk {
-    pub entities: Vec<Weak<dyn EntityBase>>,
+    pub entities: Vec<(Weak<dyn EntityBase>, Uuid)>,
+}
+
+impl EntityCacheChunk {
+    pub fn clean(&mut self) {
+        self.entities = self
+            .entities
+            .iter()
+            .filter_map(|e| e.0.upgrade().map(|a| (a, e.1)))
+            .map(|e| (Arc::downgrade(&e.0), e.1))
+            .collect();
+    }
 }
