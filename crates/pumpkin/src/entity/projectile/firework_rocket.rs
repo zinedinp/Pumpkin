@@ -1,10 +1,10 @@
 use crate::{
-    entity::{Entity, EntityBase, EntityBaseFuture, NBTStorage, projectile::ThrownItemEntity},
+    entity::{Entity, EntityBase, EntityBaseFuture, projectile::ThrownItemEntity},
     server::Server,
     world::World,
 };
 use pumpkin_data::entity::EntityStatus;
-use pumpkin_protocol::bedrock::server::actor_event::ActorEventType;
+use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
 use pumpkin_protocol::{codec::optional_int::OptionalInt, java::client::play::Metadata};
 use pumpkin_util::{
     math::vector3::Vector3,
@@ -85,7 +85,7 @@ impl FireworkRocketEntity {
         world.send_entity_status(
             entity,
             EntityStatus::FireworksExplode,
-            Some(ActorEventType::FireworksExplode),
+            Some(ActorEventID::FireworksExplode),
         );
 
         // TODO: Explode/colors
@@ -93,8 +93,6 @@ impl FireworkRocketEntity {
         entity.remove().await;
     }
 }
-
-impl NBTStorage for FireworkRocketEntity {}
 
 impl EntityBase for FireworkRocketEntity {
     fn tick<'a>(
@@ -151,11 +149,6 @@ impl EntityBase for FireworkRocketEntity {
     fn get_living_entity(&self) -> Option<&crate::entity::living::LivingEntity> {
         None
     }
-
-    fn as_nbt_storage(&self) -> &dyn crate::entity::NBTStorage {
-        self
-    }
-
     fn cast_any(&self) -> &dyn std::any::Any {
         self
     }
