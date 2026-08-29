@@ -32,7 +32,7 @@ impl MobEffect for OozingMobEffect {
             for _ in 0..2 {
                 let entity_arc = from_type(&EntityType::SLIME, spawn_pos, &world, Uuid::new_v4());
                 let entity = entity_arc.get_entity();
-                entity.set_pos(spawn_pos);
+                // entity.set_pos(spawn_pos);
                 entity.yaw.store(rand::random::<f32>() * 360.0);
                 entity.pitch.store(0.0);
 

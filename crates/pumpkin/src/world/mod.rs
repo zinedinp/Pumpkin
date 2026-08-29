@@ -10,7 +10,7 @@ use pumpkin_protocol::bedrock::client::{CBiomeDefinitionList, block_actor_data::
 use pumpkin_protocol::bedrock::network_item::{NetworkItemDescriptor, NetworkItemStackDescriptor};
 use pumpkin_protocol::codec::data_component::data_to_proto_sound;
 use pumpkin_world::generation::proto_chunk::GenerationCache;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Weak};
 use std::{
@@ -4405,17 +4405,20 @@ impl World {
         None
     }
 
+    
     /// Gets an entity by an entity id
     pub fn get_entity_by_id(&self, id: i32) -> Option<Arc<dyn EntityBase>> {
-        for entity in self.entities.load().iter() {
-            if entity.get_entity().entity_id == id {
-                return Some(entity.clone());
-            }
+        if let Some(entity) = self.entities.load().par_iter().find_any(|e| 
+            e.get_entity().entity_id == id
+        ).cloned() {
+
+        return Some(entity);
         }
-        for player in self.players.load().iter() {
-            if player.get_entity().entity_id == id {
-                return Some(player.clone() as Arc<dyn EntityBase>);
-            }
+        if let Some(player) = self.players.load().par_iter().find_any(|p| 
+            p.get_entity().entity_id == id
+        ).cloned() {
+
+        return Some(player as Arc<dyn EntityBase>);
         }
         None
     }
@@ -4431,7 +4434,11 @@ impl World {
     }
 
     // Gets all entities at a Box
+    //ENTITY CACHE OPTIMIZE MARKER
     pub fn get_all_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
+        tokio::task::block_in_place(|| {futures::executor::block_on( async {
+            //cool async code
+        })});
         let entities_guard = self.entities.load();
         let players_guard = self.players.load();
 
@@ -4448,6 +4455,7 @@ impl World {
     }
 
     // Gets all non Player entities at a Box
+    //ENTITY CACHE OPTIMIZE MARKER
     pub fn get_entities_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
         self.entities
             .load()
@@ -4458,6 +4466,7 @@ impl World {
     }
 
     // Gets all Player entities at a Box
+    //ENTITY CACHE OPTIMIZE MARKER
     pub fn get_players_at_box(&self, aabb: &BoundingBox) -> Vec<Arc<Player>> {
         let players_guard = self.players.load();
         players_guard
@@ -4840,7 +4849,7 @@ impl World {
         self.broadcast_entity_spawn(&entity);
         entity.init_data_tracker().await;
         self.add_entity_silent(entity).await;
-        eprintln!("spawned entity");
+        // eprintln!("spawned entity");
     }
 
     pub fn broadcast_entity_spawn(&self, entity: &Arc<dyn EntityBase>) {
@@ -4908,7 +4917,7 @@ impl World {
             // new_entities.retain(|e| e.get_entity().entity_uuid != base_entity.entity_uuid);
             if let Some(index) = new_entities
                 .par_iter()
-                .position_any(|e| e.get_entity().entity_uuid != base_entity.entity_uuid)
+                .position_any(|e| e.get_entity().entity_uuid == base_entity.entity_uuid)
             {
                 new_entities.swap_remove(index);
                 //CACHEPOINTFinish
@@ -4929,7 +4938,7 @@ impl World {
             &CRemoveEntities::new(&[base_entity.entity_id.into()]),
             &CRemoveActor::new(VarLong(base_entity.entity_id as i64)),
         );
-        eprintln!("removed entity");
+        // eprintln!("removed entity");
     }
 
     pub async fn remove_entities_in_chunks(

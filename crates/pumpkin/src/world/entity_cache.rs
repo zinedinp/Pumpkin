@@ -12,7 +12,8 @@ use pumpkin_util::math::{
     vector3::{Vector3, packed_chunk_pos},
 };
 use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
+    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelBridge,
+    ParallelIterator,
 };
 use tokio::{
     pin,
@@ -50,19 +51,27 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
             break;
         };
         // info!("{} - starting op {:?} - {}",id,&cache_op,i);
+        // match cache_op {
+        //     CacheOp::CleanCache { start, is_done_callback } => {is_done_callback.notify_one();}
+        //     _ => {}
+        // };
+        // continue;
         match cache_op {
             CacheOp::Add { entity } => {
+                // continue;
                 // let entity: Option<Arc<dyn EntityBase>> = entity.upgrade();
                 // if entity.is_none() {
                 //     continue
                 // }
                 // let entity = entity.expect("msg");
-                
+
                 let Some(entity): Option<Arc<dyn EntityBase>> = entity.upgrade() else {
                     info!("A - lost ref");
                     continue;
                 };
-                if Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity.get_entity().entity_uuid {
+                if Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap()
+                    == entity.get_entity().entity_uuid
+                {
                     info!("added player to cache");
                 }
                 // info!(
@@ -82,14 +91,17 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
                     .push((Arc::downgrade(&entity), entity.get_entity().entity_uuid));
             }
             CacheOp::AddMany { entities } => {
+                // continue;
                 for entity in entities {
                     let Some(entity): Option<Arc<dyn EntityBase>> = entity.upgrade() else {
                         info!("AM - lost ref");
                         continue;
                     };
-                    if Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity.get_entity().entity_uuid {
-                    info!("added player to cache");
-                }
+                    if Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap()
+                        == entity.get_entity().entity_uuid
+                    {
+                        info!("added player to cache");
+                    }
                     // info!(
                     //     "add entity - {:#?}",
                     //     entity.get_entity().entity_type.resource_name
@@ -109,6 +121,7 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
             }
             CacheOp::Remove { pos, entity_uuid } => {
                 // info!("remove entity - {}", entity_uuid);
+                // continue;
                 let pos = pos.floor_to_i32().as_packed_chunk_pos();
                 let Some(mut subchunk) = tracking_section_map.get_mut(&pos) else {
                     warn!(
@@ -128,21 +141,34 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
                 new_pos,
                 entity_uuid,
             } => {
+                // continue;
                 // let entity: Option<Arc<dyn EntityBase>> = entity.upgrade();
                 // info!("remove entity - {}", entity_uuid);
-                let is_player = Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity_uuid;
-                if is_player {
-                    info!("moving entity from {:?} to {:?}", old_pos, new_pos);
-                    info!(
+                let is_player =
+                    Uuid::parse_str("6280580c-8dc8-41c9-b62f-6456c1ec5bc7").unwrap() == entity_uuid;
+                // if is_player {
+                //     info!("moving entity from {:?} to {:?}", old_pos, new_pos);
+                //     info!(
+                //         "C moving entity from {:?} to {:?}",
+                //         old_pos.floor_to_i32().as_packed_chunk_pos(),
+                //         new_pos.floor_to_i32().as_packed_chunk_pos()
+                //     );
+                // }
+                let pos = old_pos.floor_to_i32().as_packed_chunk_pos();
+                // info!("M - ");
+                let Some(mut subchunk) = tracking_section_map.get_mut(&pos) else {
+                    if old_pos.floor_to_i32() == Vector3::new(0, 0, 0) {
+                        continue;
+                    }
+                    warn!(
+                        "M{} - tried to remove entity from subchunk that didn't exist in the cache map",
+                        if is_player { "P" } else { "" }
+                    );
+                    warn!("moving entity from {:?} to {:?}", old_pos, new_pos);
+                    warn!(
                         "C moving entity from {:?} to {:?}",
                         old_pos.floor_to_i32().as_packed_chunk_pos(),
                         new_pos.floor_to_i32().as_packed_chunk_pos()
-                    );
-                }
-                let pos = old_pos.floor_to_i32().as_packed_chunk_pos();
-                let Some(mut subchunk) = tracking_section_map.get_mut(&pos) else {
-                    warn!(
-                        "M - tried to remove entity from subchunk that didn't exist in the cache map"
                     );
                     continue;
                 };
@@ -172,10 +198,16 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
                     .entities
                     .push((Arc::downgrade(&entity), entity_uuid));
             }
-            CacheOp::CleanCache { is_done_callback } => {
+            CacheOp::CleanCache {
+                start,
+                is_done_callback,
+            } => {
+                // is_done_callback.notify_one();
+                // continue;
                 // info!("cleaning cache");
-                let mut start = Instant::now();
+                // let mut start = Instant::now();
                 let mut i = 0u64;
+                let mut delay = 0;
                 let mx = dirty_subchunk_indexs.len();
                 for idx in &dirty_subchunk_indexs {
                     let subchunk_cache = tracking_section_map.get_mut(idx);
@@ -201,15 +233,41 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
                             }
                         } //in cache but not in tree - clean cache like normal, check for empty cache, add back to tree if it still has something
                     }
-                    if start.elapsed().as_secs() > 0 {
+                    if start.elapsed().as_millis() - delay >= 50 {
                         warn!("still cleaning cache - {}/{}", i, mx);
-                        start = Instant::now()
+                        delay += 10;
                     }
                     i += 1;
                 }
                 dirty_subchunk_indexs.clear();
                 is_done_callback.notify_one();
                 // info!("cleaned cache");
+            }
+            CacheOp::GetEntitiesInBBox {
+                bbox,
+                return_channel,
+            } => {
+                let covered_chunks = bbox.covered_chunks();
+                let entities = chunk_index_tree
+                    .range(
+                        covered_chunks.min.as_packed_chunk_pos()
+                            ..=covered_chunks.max.as_packed_chunk_pos(),
+                    )
+                    .par_bridge()
+                    .filter_map(|chunk_index| {
+                        tracking_section_map.get(chunk_index).map(|subchunk_cache| {
+                            subchunk_cache.entities.par_iter().filter_map(|e| {
+                                e.0.upgrade().filter(|e: &Arc<dyn EntityBase>| {
+                                    e.get_entity().bounding_box.load().intersects(&bbox)
+                                })
+                            })
+                        })
+                    })
+                    .flatten()
+                    .collect::<Vec<_>>();
+                return_channel.send(entities).inspect_err(|er| {
+                    info!("entity cache failed GetEntitiesInBBox call - couldn't send result back")
+                });
             }
         };
         // info!("{} - ran cache op {} left",id,rx.len());
@@ -224,7 +282,7 @@ pub struct EntityCache {
     actor_tx: UnboundedSender<CacheOp>,
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 enum CacheOp {
     Add {
         entity: Weak<dyn EntityBase>,
@@ -242,7 +300,12 @@ enum CacheOp {
         entity_uuid: Uuid,
     },
     CleanCache {
+        start: tokio::time::Instant,
         is_done_callback: Arc<Notify>,
+    },
+    GetEntitiesInBBox {
+        bbox: BoundingBox,
+        return_channel: tokio::sync::oneshot::Sender<Vec<Arc<dyn EntityBase>>>,
     },
 }
 
@@ -278,6 +341,16 @@ impl EntityCache {
         info!("made entitycache");
         tokio::spawn(actor(rx));
         EntityCache { actor_tx: tx }
+    }
+
+    async fn get_entities_in_bbox(&self, bbox: BoundingBox) -> Vec<Arc<dyn EntityBase>> {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<Arc<dyn EntityBase>>>();
+        self.actor_tx.send(CacheOp::GetEntitiesInBBox {
+            bbox,
+            return_channel: tx,
+        });
+        rx.await
+            .expect("failed to recieve entity cache cmd - GetEntitiesInBBox")
     }
 
     // async fn for_each_in_box<F>(&self, bbox: BoundingBox, mut entity_cache_chunk_callback: F)
@@ -372,6 +445,7 @@ impl EntityCache {
     pub async fn clean(&self) {
         let notifer = Arc::new(tokio::sync::Notify::new());
         self.actor_tx.send(CacheOp::CleanCache {
+            start: tokio::time::Instant::now(),
             is_done_callback: notifer.clone(),
         });
         // info!("cache clean callback - is termed : {}",rx.is_terminated());

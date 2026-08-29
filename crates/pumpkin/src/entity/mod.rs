@@ -69,12 +69,9 @@ use pumpkin_util::math::{
 };
 use pumpkin_util::text::TextComponent;
 use pumpkin_util::text::hover::HoverEvent;
-<<<<<<< HEAD
 use tracing::info;
-=======
 use pumpkin_util::version::JavaMinecraftVersion;
-use std::collections::{BTreeMap, HashSet};
->>>>>>> master
+
 use std::pin::Pin;
 use std::sync::atomic::{
     AtomicBool, AtomicI32, AtomicU8, AtomicU32,

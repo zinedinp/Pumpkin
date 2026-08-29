@@ -67,7 +67,7 @@ impl EntityBase for TNTEntity {
 
             if fuse <= 1 {
                 // TNT explodes now
-                info!("killing tnt - {}",entity.entity_id);
+                // info!("killing tnt - {}",entity.entity_id);
                 self.entity.remove().await;
                 let world = self.entity.world.load();
                 if world.level_info.load().game_rules.tnt_explodes {

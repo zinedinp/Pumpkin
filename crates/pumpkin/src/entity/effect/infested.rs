@@ -55,7 +55,7 @@ impl MobEffect for InfestedMobEffect {
                     let silver = from_type(&EntityType::SILVERFISH, center, &world, Uuid::new_v4());
 
                     let entity = silver.get_entity();
-                    entity.set_pos(center);
+                    // entity.set_pos(center);
                     entity.yaw.store(rand::random::<f32>() * 360.0);
                     entity.pitch.store(0.0);
                     entity.velocity.store(Vector3::new(

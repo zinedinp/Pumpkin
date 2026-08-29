@@ -62,7 +62,7 @@ use pumpkin_protocol::{
     java::client::play::{CDamageEvent, CSetEquipment, Metadata, MetadataSerializer},
     ser::{NetworkWriteExt, WritingError},
 };
-use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::bounding_box::BoundingBox;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::text::TextComponent;
 use rand::RngExt;

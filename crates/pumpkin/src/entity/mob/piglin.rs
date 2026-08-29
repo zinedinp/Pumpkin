@@ -14,7 +14,7 @@ use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
 use pumpkin_protocol::java::client::play::Metadata;
-use pumpkin_util::math::boundingbox::EntityDimensions;
+use pumpkin_util::math::bounding_box::EntityDimensions;
 use pumpkin_util::math::position::BlockPos;
 use tokio::sync::Mutex;
 
