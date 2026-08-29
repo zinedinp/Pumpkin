@@ -878,6 +878,16 @@ pub const fn packed_block_pos(vec: &Vector3<i32>) -> i64 {
     result
 }
 
+/// Unpacks a 64-bit integer into a chunk section position vector.
+#[inline]
+#[must_use]
+pub const fn unpacked_chunk_pos(packed: i64) -> Vector3<i32> {
+    let x = (packed >> 42) as i32;
+    let y = ((packed << 44) >> 44) as i32;
+    let z = ((packed << 22) >> 42) as i32;
+    Vector3::new(x, y, z)
+}
+
 /// Packs a local position within a chunk into a single 16-bit integer.
 ///
 /// The packing format is:

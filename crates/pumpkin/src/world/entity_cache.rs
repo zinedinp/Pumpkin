@@ -353,6 +353,10 @@ impl EntityCache {
             .expect("failed to recieve entity cache cmd - GetEntitiesInBBox")
     }
 
+    async fn get_entities_in_bbox_blocking(&self, bbox: BoundingBox) -> Vec<Arc<dyn EntityBase>> {
+        tokio::task::block_in_place(|| futures::executor::block_on(self.get_entities_in_bbox(bbox)))
+    }
+
     // async fn for_each_in_box<F>(&self, bbox: BoundingBox, mut entity_cache_chunk_callback: F)
     // where
     //     F: FnMut(
@@ -442,7 +446,7 @@ impl EntityCache {
         });
     }
 
-    pub async fn clean(&self) {
+    pub fn clean(&self) {
         let notifer = Arc::new(tokio::sync::Notify::new());
         self.actor_tx.send(CacheOp::CleanCache {
             start: tokio::time::Instant::now(),
@@ -454,7 +458,7 @@ impl EntityCache {
         // info!("cache clean callback received");
         // info!("cache clean callback response : {:#?}",t);
         // info!("waiting for clean to finish");
-        notifer.notified().await;
+        tokio::task::block_in_place(|| futures::executor::block_on(notifer.notified()))
         // match t {
         //     Ok(_) => info!("done good"),
         //     Err(er) => info!("callback go bad : {}",er),

@@ -337,7 +337,7 @@ impl SpawnState {
     pub fn new(
         chunk_count: i32,
         entities: &ArcSwap<Vec<Arc<dyn EntityBase>>>,
-        world: &Arc<World>,
+        world: &World,
     ) -> Self {
         let potential = PotentialCalculator::default();
         let local_mob_cap = LocalMobCapCalculator::default();
@@ -580,7 +580,7 @@ pub fn spawn_mobs_for_chunk_generation(
                     entity
                         .get_entity()
                         .set_rotation(rand::random::<f32>() * 360., 0.);
-                    world.spawn_entity_non_save(&entity);
+                    world.spawn_entity_non_save(entity);
                     success = true;
                 }
 
@@ -826,16 +826,10 @@ pub fn is_valid_spawn_position_for_type(
     if !check_spawn_rules(entity_type, world, block_pos, is_thundering) {
         return false;
     }
-    // TODO: we should use getSpawnBox, but this is only modified for slimes and magma slimes
-    if !world.is_space_empty(BoundingBox::new_from_pos(
+    if !world.is_space_empty(entity_type.get_spawn_bounding_box(
         f64::from(block_pos.0.x) + 0.5,
         f64::from(block_pos.0.y),
         f64::from(block_pos.0.z) + 0.5,
-        &EntityDimensions {
-            width: entity_type.dimension[0],
-            height: entity_type.dimension[1],
-            eye_height: entity_type.eye_height,
-        },
     )) {
         return false;
     }
