@@ -19,7 +19,7 @@ use tokio::{
     pin,
     sync::{
         Mutex, Notify, RwLock,
-        mpsc::{UnboundedReceiver, UnboundedSender},
+        mpsc::{Receiver, Sender, error::TrySendError},
         oneshot,
     },
 };
@@ -39,7 +39,7 @@ a write queue like we have now, this requires a point in time where syncing is d
 
 */
 
-async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
+async fn actor(mut rx: Receiver<CacheOp>) {
     let mut tracking_section_map: HashMap<i64, EntityCacheChunk> = HashMap::new();
     let mut chunk_index_tree: BTreeSet<i64> = BTreeSet::new();
     let mut dirty_subchunk_indexs: BTreeSet<i64> = BTreeSet::new();
@@ -279,9 +279,12 @@ async fn actor(mut rx: UnboundedReceiver<CacheOp>) {
 }
 
 pub struct EntityCache {
-    actor_tx: UnboundedSender<CacheOp>,
+    actor_tx: Sender<CacheOp>,
 }
 
+/// Cap on how many `CacheOp`s can sit in the actors mailbox before senders start blocking.
+/// This exists purely as a memory ceiling for a slow actor (e.g. a weak CPU falling)
+const CACHE_OP_QUEUE_CAPACITY: usize = 8192; // <- this variable is to be chosen to be a large enough to not be hit under normal load
 // #[derive(Debug)]
 enum CacheOp {
     Add {
@@ -337,15 +340,43 @@ enum CacheOp {
 //this 2 phases are to be done such that the read phase is when all chunk, entity and block ticking is done, then after that, the world should start the write phase on this to enact any writes that chunks, entities, blocks or others have attempted, such as an entity moving from one chunk to another
 impl EntityCache {
     pub fn new() -> Self {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<CacheOp>();
-        info!("made entitycache");
+        let (tx, rx) = tokio::sync::mpsc::channel::<CacheOp>(CACHE_OP_QUEUE_CAPACITY);
+        info!(
+            "made entitycache with bounded channel ({})",
+            CACHE_OP_QUEUE_CAPACITY
+        );
         tokio::spawn(actor(rx));
         EntityCache { actor_tx: tx }
     }
 
+    /// Sends a `CacheOp` to the actor, backpressuring the caller instead of dropping the op
+    /// when the mailbox is full
+    ///
+    /// Silently drop Add/Move/Remove do mutate the cache index and loses one
+    /// leaves stale or missing entries that a later querie cant self heal
+    fn send_cache_op(&self, op: CacheOp) {
+        match self.actor_tx.try_send(op) {
+            Ok(()) => {}
+            Err(TrySendError::Full(op)) => {
+                warn!(
+                    "entity cache queue full ({} ops) - blocking caller until the actor catches up",
+                    CACHE_OP_QUEUE_CAPACITY
+                );
+                tokio::task::block_in_place(|| {
+                    futures::executor::block_on(self.actor_tx.send(op))
+                })
+                .inspect_err(|_| error!("entity cache actor has died -> dropping"))
+                .ok();
+            }
+            Err(TrySendError::Closed(_)) => {
+                error!("entity cache actor has died -> dropping");
+            }
+        }
+    }
+
     async fn get_entities_in_bbox(&self, bbox: BoundingBox) -> Vec<Arc<dyn EntityBase>> {
         let (tx, rx) = tokio::sync::oneshot::channel::<Vec<Arc<dyn EntityBase>>>();
-        self.actor_tx.send(CacheOp::GetEntitiesInBBox {
+        self.send_cache_op(CacheOp::GetEntitiesInBBox {
             bbox,
             return_channel: tx,
         });
@@ -395,21 +426,21 @@ impl EntityCache {
     // }
 
     pub fn add_entity(&self, entity: Arc<dyn EntityBase>) {
-        self.actor_tx.send(CacheOp::Add {
+        self.send_cache_op(CacheOp::Add {
             entity: Arc::downgrade(&entity),
         });
     }
 
     pub fn add_entities(&self, entities: Vec<Arc<dyn EntityBase>>) {
         // info!("add {} entities", entities.len());
-        self.actor_tx.send(CacheOp::AddMany {
+        self.send_cache_op(CacheOp::AddMany {
             entities: entities.into_iter().map(|e| Arc::downgrade(&e)).collect(),
         });
     }
 
     pub fn remove_entity(&self, pos: Vector3<f64>, entity_uuid: Uuid) {
         // info!("remove entity - {}", entity_uuid);
-        self.actor_tx.send(CacheOp::Remove { pos, entity_uuid });
+        self.send_cache_op(CacheOp::Remove { pos, entity_uuid });
     }
 
     // async fn pop_entity(
@@ -439,16 +470,16 @@ impl EntityCache {
 
     pub fn move_entity(&self, old_pos: Vector3<f64>, new_pos: Vector3<f64>, entity_uuid: Uuid) {
         // info!("move entity");
-        self.actor_tx.send(CacheOp::Move {
+        self.send_cache_op(CacheOp::Move {
             old_pos,
             new_pos,
-            entity_uuid: entity_uuid,
+            entity_uuid,
         });
     }
 
     pub fn clean(&self) {
         let notifer = Arc::new(tokio::sync::Notify::new());
-        self.actor_tx.send(CacheOp::CleanCache {
+        self.send_cache_op(CacheOp::CleanCache {
             start: tokio::time::Instant::now(),
             is_done_callback: notifer.clone(),
         });
