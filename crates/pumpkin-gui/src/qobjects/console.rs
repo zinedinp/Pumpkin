@@ -34,6 +34,8 @@ pub mod qobject {
         #[qml_element]
         /// False while the server is starting; QML disables the input until then.
         #[qproperty(bool, has_commands)]
+        /// True once the server is shutting down (Ctrl+C, `stop` -> QML then quits the window.
+        #[qproperty(bool, stopping)]
         type Console = super::ConsoleRust;
 
         /// Returns log lines written since the last call, oldest first, and advances the cursor.
@@ -69,6 +71,7 @@ use cxx_qt_lib::{QList, QMap, QMapPair_QString_QVariant, QString, QStringList, Q
 #[derive(Default)]
 pub struct ConsoleRust {
     has_commands: bool,
+    stopping: bool,
     /// Sequence number of the next log line this view has not shown yet.
     cursor: u64,
     /// Reused between polls so the common "nothing new" case allocates nothing.
@@ -80,6 +83,11 @@ impl qobject::Console {
         let has_commands = crate::gui_side().is_some_and(|side| side.commands().is_some());
         if *self.as_ref().has_commands() != has_commands {
             self.as_mut().set_has_commands(has_commands);
+        }
+
+        let stopping = crate::is_shutting_down();
+        if *self.as_ref().stopping() != stopping {
+            self.as_mut().set_stopping(stopping);
         }
     }
 

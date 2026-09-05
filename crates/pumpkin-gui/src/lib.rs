@@ -15,6 +15,7 @@ pub use model::{
 pub use system::{DiskSpace, SystemSampler, SystemStats, directory_size};
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The handle the `QObject`s read from.
 static GUI_SIDE: OnceLock<GuiSide> = OnceLock::new();
@@ -28,7 +29,19 @@ pub(crate) fn gui_side() -> Option<&'static GuiSide> {
 const MAIN_QML: &str = "qrc:/qt/qml/org/pumpkin/gui/qml/Main.qml";
 
 /// Set by Qt if the root QML component fails to build.
-static LOAD_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LOAD_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// Set when the server is shutting down (Ctrl+C, `stop`, window close) so the event loop can exit.
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Tells the window to leave the Qt event loop.
+pub fn notify_shutdown() {
+    SHUTTING_DOWN.store(true, Ordering::Release);
+}
+
+pub(crate) fn is_shutting_down() -> bool {
+    SHUTTING_DOWN.load(Ordering::Acquire)
+}
 
 /// Why the GUI could not start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,13 +89,17 @@ pub fn run(side: GuiSide) -> Result<i32, GuiError> {
     };
 
     let _guard = engine.as_mut().on_object_creation_failed(|_engine, _url| {
-        LOAD_FAILED.store(true, std::sync::atomic::Ordering::Release);
+        LOAD_FAILED.store(true, Ordering::Release);
     });
 
     engine.load(&cxx_qt_lib::QUrl::from(MAIN_QML));
 
-    if LOAD_FAILED.load(std::sync::atomic::Ordering::Acquire) {
+    if LOAD_FAILED.load(Ordering::Acquire) {
         return Err(GuiError::QmlLoadFailed);
+    }
+
+    if is_shutting_down() {
+        return Ok(0);
     }
 
     app.as_mut()

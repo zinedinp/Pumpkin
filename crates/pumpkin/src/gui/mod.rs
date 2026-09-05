@@ -26,6 +26,11 @@ pub fn is_attached() -> bool {
     ATTACHED.load(Ordering::Acquire)
 }
 
+/// Asks the dashboard to leave the Qt event loop. No-op if the window is not running.
+pub fn notify_shutdown() {
+    pumpkin_gui::notify_shutdown();
+}
+
 /// Creates the handle the window and the server share.
 #[must_use]
 pub fn side(config: &GuiConfig) -> GuiSide {

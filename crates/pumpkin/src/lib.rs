@@ -230,6 +230,8 @@ pub static SERVER_EXIT_CODE: AtomicI32 = AtomicI32::new(0);
 pub fn stop_server() {
     SHOULD_STOP.store(true, Ordering::Relaxed);
     STOP_INTERRUPT.cancel();
+    #[cfg(feature = "gui")]
+    crate::gui::notify_shutdown();
 }
 
 pub fn stop_or_exit_server() {

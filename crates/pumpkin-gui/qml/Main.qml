@@ -72,6 +72,18 @@ ApplicationWindow {
         }
     }
 
+    // Ctrl+C / `stop` shut the server down on another thread
+    Timer {
+        interval: 50
+        running: true
+        repeat: true
+        onTriggered: {
+            consoleController.refresh();
+            if (consoleController.stopping)
+                Qt.quit();
+        }
+    }
+
     // A real background rather than relying on the window's own fill: `grabToImage` captures
     // only this item, and anything the item does not paint comes out transparent.
     Rectangle {
