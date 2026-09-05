@@ -32,7 +32,7 @@ QtObject {
     readonly property color rowHover: dark ? "#30363f" : "#e2e7ee"
 
     // Text
-    readonly property color fg: dark ? "#e6e8ec" : "#1a1d23"
+    readonly property color fg: dark ? "#ffffff" : "#000000"
     readonly property color fgMuted: dark ? "#9aa1ae" : "#5c6472"
 
     // Accents. `accent` is Pumpkin's orange in both themes, lightened for dark backgrounds.

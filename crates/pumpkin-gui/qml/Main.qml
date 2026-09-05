@@ -171,8 +171,16 @@ ApplicationWindow {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.rightMargin: 12
                     z: 1
-                    text: Theme.dark ? "☀" : "☾"
-                    font.pixelSize: 16
+                    // The platform style's own palette can stay dark (or light) regardless of
+                    // `Theme.dark`, so the glyph needs an explicit colour rather than the
+                    // ToolButton default.
+                    contentItem: Text {
+                        text: Theme.dark ? "☀" : "☾"
+                        color: Theme.fg
+                        font.pixelSize: 16
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
                     onClicked: Theme.toggle()
                     ToolTip.visible: hovered
                     ToolTip.text: Theme.dark ? qsTr("Light theme") : qsTr("Dark theme")

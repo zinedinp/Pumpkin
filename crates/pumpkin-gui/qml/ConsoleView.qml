@@ -114,6 +114,15 @@ Item {
     onLevelFilterChanged: view.rebuildText(false)
     onSearchChanged: view.rebuildText(false)
 
+    // The level colour and the link colour are baked into the document as literal hex, so a theme
+    // switch has to re-render it.
+    Connections {
+        target: Theme
+        function onDarkChanged() {
+            view.rebuildText(true);
+        }
+    }
+
     function visibleLogText() {
         const parts = [];
         for (let i = 0; i < logModel.count; ++i) {

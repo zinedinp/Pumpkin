@@ -30,8 +30,8 @@ Rectangle {
 
         Text {
             text: tile.label
-            color: Theme.fgMuted
-            font.pixelSize: 10
+            color: Theme.accent
+            font.pixelSize: Theme.tableHeaderSize + 2
             font.bold: true
             font.letterSpacing: 0.8
         }

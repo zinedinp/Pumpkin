@@ -25,8 +25,8 @@ Rectangle {
         Text {
             text: card.title
             visible: card.title !== ""
-            color: Theme.fgMuted
-            font.pixelSize: 11
+            color: Theme.accent
+            font.pixelSize: Theme.tableHeaderSize + 2
             font.bold: true
             font.letterSpacing: 0.8
             Layout.fillWidth: true
