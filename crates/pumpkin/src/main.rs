@@ -19,6 +19,8 @@ use std::{
     sync::{OnceLock, atomic::Ordering},
     thread::{self, ThreadId},
 };
+#[cfg(feature = "gui")]
+use std::io::IsTerminal;
 #[cfg(not(unix))]
 use tokio::signal::ctrl_c;
 #[cfg(unix)]
@@ -84,8 +86,9 @@ fn main() {
         }
     };
 
+    // if the launcher isn't a tty, it is treated the same as `--gui`
     #[cfg(feature = "gui")]
-    if args.gui {
+    if args.gui || !io::stdin().is_terminal() {
         run_with_gui(&runtime, config);
         return;
     }
