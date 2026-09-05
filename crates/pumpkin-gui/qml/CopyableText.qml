@@ -17,12 +17,15 @@ RowLayout {
 
     ColumnLayout {
         spacing: 0
+        Layout.alignment: Qt.AlignRight
 
         Text {
             text: field.value
             color: Theme.fg
             font.pixelSize: 13
             font.family: "monospace"
+            horizontalAlignment: Text.AlignRight
+            Layout.alignment: Qt.AlignRight
         }
 
         Text {
@@ -30,6 +33,8 @@ RowLayout {
             visible: field.label !== ""
             color: Theme.fgMuted
             font.pixelSize: 11
+            horizontalAlignment: Text.AlignRight
+            Layout.alignment: Qt.AlignRight
         }
     }
 

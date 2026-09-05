@@ -452,6 +452,8 @@ pub struct Player {
     pub watched_section: AtomicCell<Cylindrical>,
     /// The last time the player performed an action (for idle timeout).
     pub last_action_time: AtomicCell<Instant>,
+    /// Session start; the GUI online-time column reads this.
+    pub joined_at: Instant,
     /// The ping in millis.
     pub ping: AtomicU32,
     /// The amount of ticks since the player's last attack.
@@ -754,6 +756,7 @@ impl Player {
                 NonZero::new(1).unwrap_or(NonZero::<u8>::MIN),
             )),
             last_action_time: AtomicCell::new(std::time::Instant::now()),
+            joined_at: Instant::now(),
             ping: AtomicU32::new(0),
             last_attacked_ticks: AtomicU32::new(0),
             client_loaded: AtomicBool::new(initially_loaded),

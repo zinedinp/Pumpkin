@@ -13,8 +13,12 @@ pub mod qobject {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
 
+        include!("cxx-qt-lib/qvariant.h");
+        type QVariant = cxx_qt_lib::QVariant;
+
         include!("cxx-qt-lib/qlist.h");
         type QList_f64 = cxx_qt_lib::QList<f64>;
+        type QList_QVariant = cxx_qt_lib::QList<QVariant>;
     }
 
     #[auto_cxx_name]
@@ -47,6 +51,8 @@ pub mod qobject {
         #[qproperty(QString, bedrock_address)]
         #[qproperty(f64, tick_budget_ms)]
         #[qproperty(i32, theme_preference)]
+        /// One entry per loaded world, each a map QML reads by key.
+        #[qproperty(QList_QVariant, worlds)]
         type ServerStats = super::ServerStatsRust;
 
         /// Pulls the newest snapshot. Driven by a QML `Timer`.
@@ -56,7 +62,8 @@ pub mod qobject {
 }
 
 use core::pin::Pin;
-use cxx_qt_lib::{QList, QString};
+use cxx_qt::CxxQtType;
+use cxx_qt_lib::{QList, QMap, QMapPair_QString_QVariant, QString, QVariant};
 
 /// Assigns a Qt property only when the value actually moved.
 ///
@@ -95,6 +102,8 @@ pub struct ServerStatsRust {
     bedrock_address: QString,
     tick_budget_ms: f64,
     theme_preference: i32,
+    worlds: QList<QVariant>,
+    last_worlds: Vec<crate::WorldRow>,
 }
 
 impl Default for ServerStatsRust {
@@ -129,6 +138,8 @@ impl Default for ServerStatsRust {
             bedrock_address: QString::default(),
             tick_budget_ms: 50.0,
             theme_preference,
+            worlds: QList::<QVariant>::default(),
+            last_worlds: Vec::new(),
         }
     }
 }
@@ -269,5 +280,55 @@ impl qobject::ServerStats {
         if list_changed(self.as_ref().tick_times_ms(), &ticks) {
             self.as_mut().set_tick_times_ms(to_qlist(ticks));
         }
+
+        if self.as_ref().rust().last_worlds != snapshot.worlds {
+            let rows = snapshot.worlds.iter().map(world_to_variant).fold(
+                QList::<QVariant>::default(),
+                |mut list, row| {
+                    list.append(row);
+                    list
+                },
+            );
+            self.as_mut()
+                .rust_mut()
+                .last_worlds
+                .clone_from(&snapshot.worlds);
+            self.as_mut().set_worlds(rows);
+        }
     }
+}
+
+fn world_to_variant(world: &crate::WorldRow) -> QVariant {
+    let mut map = QMap::<QMapPair_QString_QVariant>::default();
+
+    map.insert(
+        QString::from("name"),
+        QVariant::from(&QString::from(&world.name)),
+    );
+    map.insert(
+        QString::from("dimension"),
+        QVariant::from(&QString::from(&world.dimension)),
+    );
+    map.insert(
+        QString::from("chunks"),
+        QVariant::from(&i32::try_from(world.loaded_chunks).unwrap_or(i32::MAX)),
+    );
+    map.insert(
+        QString::from("entities"),
+        QVariant::from(&i32::try_from(world.entities).unwrap_or(i32::MAX)),
+    );
+    map.insert(
+        QString::from("timeOfDay"),
+        QVariant::from(&(world.time_of_day as f64)),
+    );
+    map.insert(
+        QString::from("weather"),
+        QVariant::from(&QString::from(&world.weather)),
+    );
+    map.insert(
+        QString::from("size"),
+        QVariant::from(&world.size_bytes.map_or(-1.0, |size| size as f64)),
+    );
+
+    QVariant::from(&map)
 }

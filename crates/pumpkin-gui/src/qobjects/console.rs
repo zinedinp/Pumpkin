@@ -137,7 +137,8 @@ impl qobject::Console {
         };
 
         let text = line.to_string();
-        let cursor = usize::try_from(cursor).unwrap_or(0).min(text.len());
+        // QML `cursorPosition` is UTF-16; rustyline and the dispatcher use UTF-8 byte offsets.
+        let cursor = utf16_to_utf8_offset(&text, usize::try_from(cursor).unwrap_or(0));
 
         for candidate in commands.completions(&text, cursor) {
             list.append(QString::from(&candidate));
@@ -154,6 +155,18 @@ impl qobject::Console {
             commands.request_stop();
         }
     }
+}
+
+/// Maps a QML UTF-16 cursor onto a UTF-8 byte offset in `text`.
+fn utf16_to_utf8_offset(text: &str, utf16_cursor: usize) -> usize {
+    let mut utf16 = 0;
+    for (byte_idx, ch) in text.char_indices() {
+        if utf16 >= utf16_cursor {
+            return byte_idx;
+        }
+        utf16 += ch.len_utf16();
+    }
+    text.len()
 }
 
 fn line_to_variant(line: &crate::LogLine) -> QVariant {
@@ -173,4 +186,23 @@ fn line_to_variant(line: &crate::LogLine) -> QVariant {
     );
 
     QVariant::from(&map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf16_to_utf8_offset;
+
+    #[test]
+    fn ascii_cursor_is_the_byte_offset() {
+        assert_eq!(utf16_to_utf8_offset("say hello", 4), 4);
+        assert_eq!(utf16_to_utf8_offset("say hello", 9), 9);
+    }
+
+    #[test]
+    fn utf16_cursor_skips_multibyte_scalars() {
+        // "ä" is one UTF-16 unit and two UTF-8 bytes.
+        assert_eq!(utf16_to_utf8_offset("äx", 1), 2);
+        // "😀" is two UTF-16 units and four UTF-8 bytes.
+        assert_eq!(utf16_to_utf8_offset("😀x", 2), 4);
+    }
 }

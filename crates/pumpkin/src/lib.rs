@@ -459,7 +459,21 @@ impl PumpkinServer {
     }
 
     pub async fn start(&self) {
+        // The window owns the console; taking over the TTY would leave it in raw mode when the
+        // process exits.
+        let gui_owns_console = {
+            #[cfg(feature = "gui")]
+            {
+                crate::gui::is_attached()
+            }
+            #[cfg(not(feature = "gui"))]
+            {
+                false
+            }
+        };
+
         if self.server.advanced_config.commands.use_console
+            && !gui_owns_console
             && let Some((wrapper, _, _)) = LOGGER_IMPL.wait()
         {
             if let Some(rl) = wrapper.take_readline() {

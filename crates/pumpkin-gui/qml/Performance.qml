@@ -119,20 +119,22 @@ ScrollView {
                     }
                 }
 
+                Item {
+                    Layout.fillWidth: true
+                }
+
                 CopyableText {
                     visible: page.stats.javaAddress !== ""
                     value: page.stats.javaAddress
                     label: qsTr("Java Edition")
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                 }
 
                 CopyableText {
                     visible: page.stats.bedrockAddress !== ""
                     value: page.stats.bedrockAddress
                     label: qsTr("Bedrock Edition")
-                }
-
-                Item {
-                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                 }
             }
         }

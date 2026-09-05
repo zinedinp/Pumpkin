@@ -33,13 +33,14 @@ ApplicationWindow {
         Component.onCompleted: Theme.animations = screenshotPath === ""
     }
 
-    ConfirmDialog {
-        id: stopDialog
+    function stopAndClose() {
+        consoleController.requestStop();
+        root.close();
+    }
 
-        title: qsTr("Stop the server?")
-        body: qsTr("All worlds and player data are saved first. Players online are disconnected.")
-        confirmText: qsTr("Stop Server")
-        onConfirmed: consoleController.requestStop()
+    onClosing: {
+        if (dev.screenshotPath === "")
+            consoleController.requestStop();
     }
 
     // Headless capture for development and CI: render, save a PNG, exit. Off unless
@@ -141,7 +142,7 @@ ApplicationWindow {
                         text: qsTr("Stop Server")
                         accent: Theme.danger
                         enabled: consoleController.hasCommands
-                        onClicked: stopDialog.open()
+                        onClicked: root.stopAndClose()
                     }
 
                     Item {
@@ -194,8 +195,8 @@ ApplicationWindow {
                 Performance {
                     stats: stats
                 }
-                Placeholder {
-                    text: qsTr("Worlds")
+                Worlds {
+                    stats: stats
                 }
                 Players {
                     controller: playerList

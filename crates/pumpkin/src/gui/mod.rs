@@ -4,6 +4,7 @@ mod log_layer;
 mod sampler;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pumpkin_config::gui::GuiConfig;
 use pumpkin_gui::{GuiCommands, GuiSide, LogLevel, ThemePreference};
@@ -17,6 +18,14 @@ pub use log_layer::layer as log_layer;
 // dependency behind one module.
 pub use pumpkin_gui::{GuiError, run};
 
+static ATTACHED: AtomicBool = AtomicBool::new(false);
+
+/// True once [`attach`] has run, so `PumpkinServer::start` can leave the TTY alone.
+#[must_use]
+pub fn is_attached() -> bool {
+    ATTACHED.load(Ordering::Acquire)
+}
+
 /// Creates the handle the window and the server share.
 #[must_use]
 pub fn side(config: &GuiConfig) -> GuiSide {
@@ -28,6 +37,8 @@ pub fn side(config: &GuiConfig) -> GuiSide {
 
 /// Connects a started server to the window: starts the samplers and enables the console.
 pub fn attach(server: &Arc<Server>, side: &GuiSide, config: &GuiConfig) {
+    ATTACHED.store(true, Ordering::Release);
+
     let commands: Arc<dyn GuiCommands> = Arc::new(ServerCommands {
         server: server.clone(),
     });
@@ -92,6 +103,6 @@ impl GuiCommands for ServerCommands {
     }
 
     fn request_stop(&self) {
-        crate::stop_server();
+        self.submit("stop".to_owned());
     }
 }

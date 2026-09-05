@@ -11,10 +11,28 @@ use pumpkin_gui::{GuiSide, PlayerRow, ServerMeta, Snapshot, SystemSampler, World
 use crate::server::Server;
 use crate::{SHOULD_STOP, STOP_INTERRUPT};
 
+/// Folders walked for one dimension. `root` is shared; region/entities/poi are not.
+struct WorldScan {
+    dimension: String,
+    root: std::path::PathBuf,
+    region: std::path::PathBuf,
+    entities: std::path::PathBuf,
+    poi: std::path::PathBuf,
+}
+
+impl WorldScan {
+    fn dimension_size(&self) -> u64 {
+        pumpkin_gui::directory_size(&self.region)
+            + pumpkin_gui::directory_size(&self.entities)
+            + pumpkin_gui::directory_size(&self.poi)
+    }
+}
+
 /// Disk figures, shared between the slow scanner and the fast sampler.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct DiskUsage {
     worlds_size: Option<u64>,
+    per_world: Vec<(String, u64)>,
     free: u64,
     total: u64,
 }
@@ -51,7 +69,7 @@ fn spawn_fast_sampler(
 
         while !SHOULD_STOP.load(Ordering::Relaxed) {
             let stats = system.sample();
-            let disk = **disk.load();
+            let disk = (*disk.load()).clone();
 
             let now = Instant::now();
             let elapsed = now.duration_since(last_at).as_secs_f64().max(0.001);
@@ -61,7 +79,7 @@ fn spawn_fast_sampler(
             last_net = net;
             last_at = now;
 
-            let worlds = collect_worlds(&server, &last_worlds);
+            let worlds = collect_worlds(&server, &last_worlds, &disk.per_world);
             last_worlds.clone_from(&worlds);
 
             snapshot.store(Arc::new(Snapshot {
@@ -103,23 +121,50 @@ fn spawn_disk_scanner(server: &Arc<Server>, disk: &Arc<ArcSwap<DiskUsage>>, scan
 
     server.clone().spawn_task(async move {
         while !SHOULD_STOP.load(Ordering::Relaxed) {
-            let paths: Vec<std::path::PathBuf> = server
+            let scans: Vec<WorldScan> = server
                 .worlds
                 .load()
                 .iter()
-                .map(|world| world.level.level_folder.root_folder.clone())
+                .map(|world| {
+                    let folder = &world.level.level_folder;
+                    WorldScan {
+                        dimension: world.dimension.minecraft_name.to_owned(),
+                        root: folder.root_folder.clone(),
+                        region: folder.region_folder.clone(),
+                        entities: folder.entities_folder.clone(),
+                        poi: folder.poi_folder.clone(),
+                    }
+                })
                 .collect();
 
             // Walking a world directory is slow and blocking; keep it off the async runtime.
             let scanned = tokio::task::spawn_blocking(move || {
                 let mut system = SystemSampler::new();
-                let free = paths
+                let free = scans
                     .first()
-                    .and_then(|path| system.disk_space_for(path))
+                    .and_then(|scan| system.disk_space_for(&scan.root))
                     .unwrap_or_default();
 
+                // Keyed by dimension: every world shares the same root folder, so a name lookup
+                // would assign the overworld total to the Nether and the End as well.
+                let per_world: Vec<(String, u64)> = scans
+                    .iter()
+                    .map(|scan| (scan.dimension.clone(), scan.dimension_size()))
+                    .collect();
+
+                // Unique roots so playerdata and level.dat are not counted once per dimension.
+                let mut roots: Vec<std::path::PathBuf> =
+                    scans.iter().map(|s| s.root.clone()).collect();
+                roots.sort();
+                roots.dedup();
+                let worlds_size = roots
+                    .iter()
+                    .map(|root| pumpkin_gui::directory_size(root))
+                    .sum();
+
                 DiskUsage {
-                    worlds_size: Some(paths.iter().map(|p| pumpkin_gui::directory_size(p)).sum()),
+                    worlds_size: Some(worlds_size),
+                    per_world,
                     free: free.free,
                     total: free.total,
                 }
@@ -173,7 +218,7 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
             ping_ms: i32::try_from(player.ping.load(Ordering::Relaxed)).unwrap_or(i32::MAX),
             dimension: player.world().dimension.minecraft_name.to_owned(),
             gamemode: format!("{:?}", player.gamemode.load()).to_lowercase(),
-            online_secs: 0,
+            online_secs: player.joined_at.elapsed().as_secs(),
         });
     });
 
@@ -181,7 +226,11 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
     rows
 }
 
-fn collect_worlds(server: &Server, previous: &[WorldRow]) -> Vec<WorldRow> {
+fn collect_worlds(
+    server: &Server,
+    previous: &[WorldRow],
+    sizes: &[(String, u64)],
+) -> Vec<WorldRow> {
     server
         .worlds
         .load()
@@ -199,13 +248,24 @@ fn collect_worlds(server: &Server, previous: &[WorldRow]) -> Vec<WorldRow> {
             );
 
             let (time_of_day, weather) = world_time_and_weather(world);
+            let dimension = world.dimension.minecraft_name.to_owned();
+            let size_bytes = sizes
+                .iter()
+                .find(|(dim, _)| dim == &dimension)
+                .map(|(_, size)| *size)
+                .or_else(|| {
+                    previous
+                        .iter()
+                        .find(|row| row.dimension == dimension)
+                        .and_then(|row| row.size_bytes)
+                });
 
             WorldRow {
                 name,
-                dimension: world.dimension.minecraft_name.to_owned(),
+                dimension,
                 loaded_chunks,
                 entities: world.entities.load().len(),
-                size_bytes: None,
+                size_bytes,
                 time_of_day,
                 weather,
             }

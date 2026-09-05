@@ -85,9 +85,19 @@ RowLayout {
             onAccepted: input.submit()
             onTextEdited: hint.text = ""
 
-            Keys.onUpPressed: input.recall(-1)
-            Keys.onDownPressed: input.recall(1)
-            Keys.onTabPressed: input.complete()
+            Keys.onUpPressed: event => {
+                event.accepted = true;
+                input.recall(-1);
+            }
+            Keys.onDownPressed: event => {
+                event.accepted = true;
+                input.recall(1);
+            }
+            // Swallow Tab so focus does not also jump to the Run button.
+            Keys.onTabPressed: event => {
+                event.accepted = true;
+                input.complete();
+            }
         }
 
         Text {

@@ -47,6 +47,7 @@ fn main() {
             "qml/Meter.qml",
             "qml/Badge.qml",
             "qml/Placeholder.qml",
+            "qml/Worlds.qml",
             "qml/Players.qml",
             "qml/PlayerRowDelegate.qml",
             "qml/IconButton.qml",
