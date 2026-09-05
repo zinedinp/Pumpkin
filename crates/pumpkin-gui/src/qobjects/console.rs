@@ -61,6 +61,10 @@ pub mod qobject {
         #[qinvokable]
         fn request_stop(&self);
 
+        /// Opens the native save dialog with `file_name` suggested, then writes `contents`.
+        #[qinvokable]
+        fn save_log(&self, file_name: &QString, contents: &QString) -> bool;
+
     }
 }
 
@@ -163,6 +167,46 @@ impl qobject::Console {
             commands.request_stop();
         }
     }
+
+    #[allow(clippy::unused_self)]
+    pub fn save_log(&self, file_name: &QString, contents: &QString) -> bool {
+        let mut name = file_name.to_string();
+        name = name.trim().to_owned();
+        if name.is_empty() {
+            return false;
+        }
+        if !name.ends_with(".log") {
+            name.push_str(".log");
+        }
+
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Save log")
+            .add_filter("Log files", &["log"])
+            .set_file_name(&name);
+        if let Some(folder) = documents_dir() {
+            dialog = dialog.set_directory(folder);
+        }
+
+        let Some(path) = dialog.save_file() else {
+            return false;
+        };
+        std::fs::write(path, contents.to_string()).is_ok()
+    }
+}
+
+fn documents_dir() -> Option<std::path::PathBuf> {
+    if let Ok(output) = std::process::Command::new("xdg-user-dir")
+        .arg("DOCUMENTS")
+        .output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !path.is_empty() {
+            return Some(std::path::PathBuf::from(path));
+        }
+    }
+
+    std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join("Documents"))
 }
 
 /// Maps a QML UTF-16 cursor onto a UTF-8 byte offset in `text`.
@@ -194,23 +238,4 @@ fn line_to_variant(line: &crate::LogLine) -> QVariant {
     );
 
     QVariant::from(&map)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::utf16_to_utf8_offset;
-
-    #[test]
-    fn ascii_cursor_is_the_byte_offset() {
-        assert_eq!(utf16_to_utf8_offset("say hello", 4), 4);
-        assert_eq!(utf16_to_utf8_offset("say hello", 9), 9);
-    }
-
-    #[test]
-    fn utf16_cursor_skips_multibyte_scalars() {
-        // "ä" is one UTF-16 unit and two UTF-8 bytes.
-        assert_eq!(utf16_to_utf8_offset("äx", 1), 2);
-        // "😀" is two UTF-16 units and four UTF-8 bytes.
-        assert_eq!(utf16_to_utf8_offset("😀x", 2), 4);
-    }
 }

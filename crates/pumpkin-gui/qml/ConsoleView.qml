@@ -55,6 +55,43 @@ Item {
             logList.positionViewAtEnd();
     }
 
+    function visibleLogText() {
+        const parts = [];
+        for (let i = 0; i < logModel.count; ++i) {
+            const row = logModel.get(i);
+            if (view.visibleLine(row.level, row.message))
+                parts.push(row.message);
+        }
+        return parts.join("\n");
+    }
+
+    function defaultLogName() {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, "0");
+        return now.getFullYear()
+            + "-" + pad(now.getMonth() + 1)
+            + "-" + pad(now.getDate())
+            + "_" + pad(now.getHours())
+            + "-" + pad(now.getMinutes())
+            + "-" + pad(now.getSeconds())
+            + ".log";
+    }
+
+    function copyVisible() {
+        const text = view.visibleLogText();
+        if (text === "")
+            return;
+        clipboardHelper.text = "```\n" + text + "\n```";
+        clipboardHelper.selectAll();
+        clipboardHelper.copy();
+        clipboardHelper.deselect();
+        copiedHint.show();
+    }
+
+    function openSaveDialog() {
+        view.controller.saveLog(view.defaultLogName(), view.visibleLogText());
+    }
+
     function levelColor(level) {
         switch (level) {
         case "error":
@@ -75,6 +112,24 @@ Item {
         repeat: true
         triggeredOnStart: true
         onTriggered: view.poll()
+    }
+
+    TextEdit {
+        id: clipboardHelper
+        visible: false
+        width: 0
+        height: 0
+    }
+
+    Timer {
+        id: copiedHint
+        interval: 1200
+        property bool visible: false
+        function show() {
+            visible = true;
+            restart();
+        }
+        onTriggered: visible = false
     }
 
     ColumnLayout {
@@ -102,6 +157,18 @@ Item {
 
             Item {
                 Layout.fillWidth: true
+            }
+
+            ThemedButton {
+                text: copiedHint.visible ? qsTr("Copied") : qsTr("Copy")
+                enabled: logModel.count > 0
+                onClicked: view.copyVisible()
+            }
+
+            ThemedButton {
+                text: qsTr("Save log")
+                enabled: logModel.count > 0
+                onClicked: view.openSaveDialog()
             }
 
             ThemedCheckBox {
@@ -143,15 +210,18 @@ Item {
                     height: shown ? line.implicitHeight : 0
                     visible: shown
 
-                    Text {
+                    TextEdit {
                         id: line
                         width: parent.width
                         text: message
                         color: view.levelColor(level)
                         font.family: "monospace"
                         font.pixelSize: 12
-                        wrapMode: Text.Wrap
-                        textFormat: Text.PlainText
+                        wrapMode: TextEdit.Wrap
+                        textFormat: TextEdit.PlainText
+                        readOnly: true
+                        selectByMouse: true
+                        persistentSelection: false
                     }
                 }
             }
