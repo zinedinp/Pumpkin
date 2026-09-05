@@ -36,6 +36,54 @@ Item {
         return true;
     }
 
+    function escapeHtml(text) {
+        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function colorHex(c) {
+        function channel(v) {
+            return Math.round(v * 255).toString(16).padStart(2, "0");
+        }
+        return "#" + channel(c.r) + channel(c.g) + channel(c.b);
+    }
+
+    // One log entry is one rich-text run. The whole document is wrapped in a single
+    // "white-space:pre-wrap" block (see htmlFor) rather than styling every span, since the
+    // property is unreliable on inline elements in Qt's rich-text subset but well supported on
+    // a block.
+    function lineHtml(level, message) {
+        return "<span style=\"color:" + view.colorHex(view.levelColor(level)) + "\">"
+            + view.escapeHtml(message) + "</span><br>";
+    }
+
+    function htmlFor(first) {
+        let body = "";
+        for (let i = first; i < logModel.count; ++i) {
+            const row = logModel.get(i);
+            if (view.visibleLine(row.level, row.message))
+                body += view.lineHtml(row.level, row.message);
+        }
+        return "<div style=\"white-space:pre-wrap;\">" + body + "</div>";
+    }
+
+    // Reassigning `text` re-parses the whole document and always resets Qt's selection to
+    // empty.
+    function rebuildText(preserveSelection) {
+        const start = logView.selectionStart;
+        const end = logView.selectionEnd;
+        logView.text = view.htmlFor(0);
+        if (preserveSelection && end > start)
+            logView.select(start, end);
+    }
+
+    function isAtEnd() {
+        return flick.atYEnd;
+    }
+
+    function scrollToEnd() {
+        flick.contentY = Math.max(0, flick.contentHeight - flick.height);
+    }
+
     function poll() {
         const fresh = view.controller.takeNewLines();
         if (fresh.length === 0)
@@ -43,17 +91,25 @@ Item {
 
         // Whether the view was pinned to the bottom before appending decides whether we follow;
         // checking afterwards would always look "not at the end".
-        const following = logList.atYEnd;
+        const following = view.isAtEnd();
 
         for (let i = 0; i < fresh.length; ++i)
             logModel.append(fresh[i]);
 
-        if (logModel.count > view.maxLines)
+        let trimmedFront = false;
+        if (logModel.count > view.maxLines) {
             logModel.remove(0, logModel.count - view.maxLines);
+            trimmedFront = true;
+        }
+
+        view.rebuildText(!trimmedFront);
 
         if (following || autoScroll.checked)
-            logList.positionViewAtEnd();
+            view.scrollToEnd();
     }
+
+    onLevelFilterChanged: view.rebuildText(false)
+    onSearchChanged: view.rebuildText(false)
 
     function visibleLogText() {
         const parts = [];
@@ -186,43 +242,34 @@ Item {
             border.width: 1
             radius: Theme.radius
 
-            ListView {
-                id: logList
+            // A single TextEdit over the whole log, not one per line: Qt Quick has no notion of a
+            // selection that spans several delegates in a ListView
+            Flickable {
+                id: flick
 
                 anchors.fill: parent
                 anchors.margins: 8
                 clip: true
-                model: logModel
                 boundsBehavior: Flickable.StopAtBounds
-                spacing: 1
+                contentWidth: width
+                contentHeight: logView.implicitHeight
 
                 ScrollBar.vertical: ScrollBar {}
 
-                // Height lives on the wrapper, not the Text: wrapping Text binds
-                // implicitHeight to height and would loop.
-                delegate: Item {
-                    required property string level
-                    required property string message
+                TextEdit {
+                    id: logView
 
-                    readonly property bool shown: view.visibleLine(level, message)
-
-                    width: ListView.view.width
-                    height: shown ? line.implicitHeight : 0
-                    visible: shown
-
-                    TextEdit {
-                        id: line
-                        width: parent.width
-                        text: message
-                        color: view.levelColor(level)
-                        font.family: "monospace"
-                        font.pixelSize: 12
-                        wrapMode: TextEdit.Wrap
-                        textFormat: TextEdit.PlainText
-                        readOnly: true
-                        selectByMouse: true
-                        persistentSelection: false
-                    }
+                    width: flick.width
+                    color: Theme.fg
+                    font.family: "monospace"
+                    font.pixelSize: 12
+                    wrapMode: TextEdit.Wrap
+                    textFormat: TextEdit.RichText
+                    readOnly: true
+                    selectByMouse: true
+                    // Without this, selecting text then clicking "Copy" (or anything else that
+                    // steals focus) clears the highlight immediately.
+                    persistentSelection: true
                 }
             }
 
