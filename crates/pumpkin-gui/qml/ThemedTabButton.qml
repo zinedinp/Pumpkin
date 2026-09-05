@@ -24,9 +24,8 @@ TabButton {
         Rectangle {
             anchors.bottom: parent.bottom
             width: parent.width
-            height: 2
-            color: tab.checked ? Theme.accent : Theme.border
-            opacity: tab.checked ? 1 : 0.5
+            height: tab.checked ? 2 : 0
+            color: Theme.accent
         }
     }
 }

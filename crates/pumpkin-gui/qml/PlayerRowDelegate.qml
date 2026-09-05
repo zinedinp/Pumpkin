@@ -18,11 +18,12 @@ Rectangle {
     required property bool operator
     required property bool banned
     required property bool whitelisted
+    required property int index
 
     signal reasonRequested(string action, string playerName)
 
     height: 48
-    color: hover.hovered ? Theme.surfaceAlt : "transparent"
+    color: hover.hovered ? Theme.rowHover : (index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
 
     HoverHandler {
         id: hover
@@ -150,7 +151,6 @@ Rectangle {
         anchors.bottom: parent.bottom
         width: parent.width
         height: 1
-        color: Theme.border
-        opacity: 0.5
+        color: Theme.rule
     }
 }

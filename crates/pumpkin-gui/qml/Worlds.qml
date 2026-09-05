@@ -132,7 +132,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 1
-                color: Theme.border
+                color: Theme.rule
             }
 
             ListView {
@@ -153,10 +153,11 @@ Item {
                     required property real timeOfDay
                     required property string weather
                     required property real size
+                    required property int index
 
                     width: ListView.view.width
                     height: 34
-                    color: hover.hovered ? Theme.surfaceAlt : "transparent"
+                    color: hover.hovered ? Theme.rowHover : (index % 2 === 0 ? Theme.rowEven : Theme.rowOdd)
 
                     HoverHandler {
                         id: hover
@@ -233,8 +234,7 @@ Item {
                         anchors.bottom: parent.bottom
                         width: parent.width
                         height: 1
-                        color: Theme.border
-                        opacity: 0.5
+                        color: Theme.rule
                     }
                 }
             }

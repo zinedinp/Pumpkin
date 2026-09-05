@@ -25,6 +25,11 @@ QtObject {
     readonly property color surface: dark ? "#1e2128" : "#ffffff"
     readonly property color surfaceAlt: dark ? "#262a33" : "#eef0f4"
     readonly property color border: dark ? "#333844" : "#d8dce4"
+    // Hairline between chrome segments (header / tabs / content) and table rows.
+    readonly property color rule: dark ? "#4a5160" : "#b8c0cc"
+    readonly property color rowEven: dark ? "#1e2128" : "#ffffff"
+    readonly property color rowOdd: dark ? "#252a33" : "#eef1f5"
+    readonly property color rowHover: dark ? "#30363f" : "#e2e7ee"
 
     // Text
     readonly property color fg: dark ? "#e6e8ec" : "#1a1d23"

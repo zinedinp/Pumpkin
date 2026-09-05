@@ -95,7 +95,7 @@ ApplicationWindow {
                     anchors.bottom: parent.bottom
                     width: parent.width
                     height: 1
-                    color: Theme.border
+                    color: Theme.rule
                 }
 
                 RowLayout {
@@ -166,6 +166,13 @@ ApplicationWindow {
 
                 background: Rectangle {
                     color: Theme.surface
+
+                    Rectangle {
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        height: 1
+                        color: Theme.rule
+                    }
                 }
 
                 ThemedTabButton {

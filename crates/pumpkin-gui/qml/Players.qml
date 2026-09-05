@@ -252,7 +252,7 @@ Item {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 1
-                    color: Theme.border
+                    color: Theme.rule
                 }
 
                 ListView {
