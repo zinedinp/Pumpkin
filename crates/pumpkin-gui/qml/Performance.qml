@@ -123,18 +123,24 @@ ScrollView {
                     Layout.fillWidth: true
                 }
 
-                CopyableText {
-                    visible: page.stats.javaAddress !== ""
-                    value: page.stats.javaAddress
-                    label: qsTr("Java Edition")
+                RowLayout {
+                    spacing: 16
+                    Layout.fillWidth: false
                     Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                }
 
-                CopyableText {
-                    visible: page.stats.bedrockAddress !== ""
-                    value: page.stats.bedrockAddress
-                    label: qsTr("Bedrock Edition")
-                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                    CopyableText {
+                        visible: page.stats.javaAddress !== ""
+                        value: page.stats.javaAddress
+                        label: qsTr("Java Edition")
+                        Layout.fillWidth: false
+                    }
+
+                    CopyableText {
+                        visible: page.stats.bedrockAddress !== ""
+                        value: page.stats.bedrockAddress
+                        label: qsTr("Bedrock Edition")
+                        Layout.fillWidth: false
+                    }
                 }
             }
         }

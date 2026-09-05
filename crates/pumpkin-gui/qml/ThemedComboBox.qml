@@ -5,7 +5,7 @@ import org.pumpkin.gui
 ComboBox {
     id: combo
 
-    implicitHeight: 30
+    implicitHeight: Theme.controlHeight
 
     contentItem: Text {
         text: combo.displayText

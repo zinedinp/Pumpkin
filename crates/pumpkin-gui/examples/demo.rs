@@ -115,15 +115,38 @@ fn sample_loop(side: &GuiSide) {
                 .map(|i| ((mspt + f64::from(i % 7)) * 1_000_000.0) as i64)
                 .collect(),
             players: demo_players(elapsed),
-            worlds: vec![WorldRow {
-                name: "world".to_owned(),
-                dimension: "minecraft:overworld".to_owned(),
-                loaded_chunks: 1024,
-                entities: 137,
-                size_bytes: Some(512 * 1024 * 1024),
-                time_of_day: (elapsed as i64 * 20) % 24_000,
-                weather: "clear".to_owned(),
-            }],
+            worlds: vec![
+                WorldRow {
+                    name: "world".to_owned(),
+                    dimension: "minecraft:overworld".to_owned(),
+                    loaded_chunks: 1024,
+                    entities: 137,
+                    players: 2,
+                    size_bytes: Some(512 * 1024 * 1024),
+                    time_of_day: (elapsed as i64 * 20) % 24_000,
+                    weather: "clear".to_owned(),
+                },
+                WorldRow {
+                    name: "world".to_owned(),
+                    dimension: "minecraft:the_nether".to_owned(),
+                    loaded_chunks: 86,
+                    entities: 12,
+                    players: 1,
+                    size_bytes: Some(48 * 1024 * 1024),
+                    time_of_day: 0,
+                    weather: "clear".to_owned(),
+                },
+                WorldRow {
+                    name: "world".to_owned(),
+                    dimension: "minecraft:the_end".to_owned(),
+                    loaded_chunks: 24,
+                    entities: 4,
+                    players: 1,
+                    size_bytes: Some(16 * 1024 * 1024),
+                    time_of_day: 0,
+                    weather: "clear".to_owned(),
+                },
+            ],
             worlds_size_bytes: Some(512 * 1024 * 1024),
             disk_free: disk.free,
             disk_total: disk.total,
@@ -145,20 +168,37 @@ fn sample_loop(side: &GuiSide) {
 
 fn demo_players(elapsed: f64) -> Vec<PlayerRow> {
     [
-        ("Alex", "minecraft:overworld"),
-        ("Steve", "minecraft:the_nether"),
-        ("Herobrine", "minecraft:the_end"),
-        ("Notch", "minecraft:overworld"),
+        ("Alex", "minecraft:overworld", true, true, false, true),
+        ("Steve", "minecraft:the_nether", true, false, false, false),
+        ("Herobrine", "minecraft:the_end", true, false, true, false),
+        ("Notch", "minecraft:overworld", true, false, false, true),
+        ("Dinnerbone", "", false, true, false, false),
+        ("jeb_", "", false, false, false, true),
+        ("Grumm", "", false, false, true, false),
     ]
     .into_iter()
     .enumerate()
-    .map(|(index, (name, dimension))| PlayerRow {
-        name: name.to_owned(),
-        uuid: format!("00000000-0000-0000-0000-00000000000{index}"),
-        ping_ms: 20 + i32::try_from(index).unwrap_or(0) * 15,
-        dimension: dimension.to_owned(),
-        gamemode: "survival".to_owned(),
-        online_secs: elapsed as u64,
-    })
+    .map(
+        |(index, (name, dimension, online, operator, banned, whitelisted))| PlayerRow {
+            name: name.to_owned(),
+            uuid: format!("00000000-0000-0000-0000-00000000000{index}"),
+            ping_ms: if online {
+                20 + i32::try_from(index).unwrap_or(0) * 15
+            } else {
+                -1
+            },
+            dimension: dimension.to_owned(),
+            gamemode: if online {
+                "survival".to_owned()
+            } else {
+                String::new()
+            },
+            online_secs: if online { elapsed as u64 } else { 0 },
+            online,
+            operator,
+            banned,
+            whitelisted,
+        },
+    )
     .collect()
 }

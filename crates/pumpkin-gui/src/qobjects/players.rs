@@ -55,6 +55,14 @@ pub mod qobject {
         /// Adds a name to the whitelist (`whitelist add`).
         #[qinvokable]
         fn whitelist(&self, name: &QString);
+
+        /// Removes a name from the whitelist (`whitelist remove`).
+        #[qinvokable]
+        fn unwhitelist(&self, name: &QString);
+
+        /// Lifts a player ban (`pardon`).
+        #[qinvokable]
+        fn pardon(&self, name: &QString);
     }
 }
 
@@ -116,6 +124,14 @@ impl qobject::PlayerList {
 
     pub fn whitelist(&self, name: &QString) {
         self.run_targeted("whitelist add", name, None);
+    }
+
+    pub fn unwhitelist(&self, name: &QString) {
+        self.run_targeted("whitelist remove", name, None);
+    }
+
+    pub fn pardon(&self, name: &QString) {
+        self.run_targeted("pardon", name, None);
     }
 
     /// Builds `<command> <name> [reason]` and submits it.
@@ -202,6 +218,13 @@ fn player_to_variant(player: &crate::PlayerRow) -> QVariant {
     map.insert(
         QString::from("online"),
         QVariant::from(&(player.online_secs as f64)),
+    );
+    map.insert(QString::from("isOnline"), QVariant::from(&player.online));
+    map.insert(QString::from("operator"), QVariant::from(&player.operator));
+    map.insert(QString::from("banned"), QVariant::from(&player.banned));
+    map.insert(
+        QString::from("whitelisted"),
+        QVariant::from(&player.whitelisted),
     );
 
     QVariant::from(&map)

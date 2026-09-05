@@ -12,18 +12,37 @@ RowLayout {
 
     property string value: ""
     property string label: ""
+    // Table cells: value and button on one line, no caption, left-aligned.
+    property bool compact: false
+    property bool mono: true
 
     spacing: 6
 
+    Text {
+        visible: field.compact
+        text: field.value
+        color: Theme.fg
+        font.pixelSize: 12
+        font.family: field.mono ? "monospace" : "sans-serif"
+        elide: Text.ElideMiddle
+        verticalAlignment: Text.AlignVCenter
+        Layout.fillWidth: field.compact
+        Layout.preferredWidth: field.compact ? 1 : 0
+        Layout.alignment: Qt.AlignVCenter
+    }
+
     ColumnLayout {
+        visible: !field.compact
         spacing: 0
         Layout.alignment: Qt.AlignRight
+        Layout.preferredWidth: field.compact ? 0 : implicitWidth
+        Layout.maximumWidth: field.compact ? 0 : implicitWidth
 
         Text {
             text: field.value
             color: Theme.fg
             font.pixelSize: 13
-            font.family: "monospace"
+            font.family: field.mono ? "monospace" : "sans-serif"
             horizontalAlignment: Text.AlignRight
             Layout.alignment: Qt.AlignRight
         }
@@ -44,12 +63,15 @@ RowLayout {
         text: field.value
     }
 
-    ToolButton {
-        id: copyButton
-
-        implicitWidth: 24
-        implicitHeight: 24
-        Layout.alignment: Qt.AlignTop
+    IconButton {
+        source: Icons.copy
+        tint: copiedHint.visible ? Theme.good : Theme.fg
+        tooltip: qsTr("Copy")
+        Layout.alignment: Qt.AlignVCenter
+        Layout.preferredWidth: implicitWidth
+        Layout.preferredHeight: implicitHeight
+        Layout.minimumWidth: implicitWidth
+        Layout.minimumHeight: implicitHeight
 
         onClicked: {
             clipboardHelper.selectAll();
@@ -57,24 +79,6 @@ RowLayout {
             clipboardHelper.deselect();
             copiedHint.show();
         }
-
-        contentItem: Text {
-            // Two offset rectangles: the usual "copy" glyph, drawn with text so it needs no asset.
-            text: copiedHint.visible ? "✓" : "⧉"
-            color: copiedHint.visible ? Theme.good : Theme.fgMuted
-            font.pixelSize: 13
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-
-        background: Rectangle {
-            radius: 4
-            color: copyButton.hovered ? Theme.surfaceAlt : "transparent"
-        }
-
-        ToolTip.visible: hovered && !copiedHint.visible
-        ToolTip.text: qsTr("Copy")
-        ToolTip.delay: 400
     }
 
     Timer {

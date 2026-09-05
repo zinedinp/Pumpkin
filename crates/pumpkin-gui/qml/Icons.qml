@@ -10,4 +10,5 @@ QtObject {
     readonly property url op: base + "op.svg"
     readonly property url kick: base + "kick.svg"
     readonly property url ban: base + "ban.svg"
+    readonly property url copy: base + "copy.svg"
 }

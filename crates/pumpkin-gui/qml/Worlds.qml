@@ -80,11 +80,19 @@ Item {
                     Layout.preferredWidth: 160
                 }
                 Text {
-                    text: qsTr("CHUNKS")
+                    text: qsTr("PLAYERS")
                     color: Theme.fgMuted
                     font.pixelSize: 10
                     font.bold: true
                     Layout.preferredWidth: 70
+                    horizontalAlignment: Text.AlignRight
+                }
+                Text {
+                    text: qsTr("LOADED CHUNKS")
+                    color: Theme.fgMuted
+                    font.pixelSize: 10
+                    font.bold: true
+                    Layout.preferredWidth: 110
                     horizontalAlignment: Text.AlignRight
                 }
                 Text {
@@ -139,6 +147,7 @@ Item {
                 delegate: Rectangle {
                     required property string name
                     required property string dimension
+                    required property int players
                     required property int chunks
                     required property int entities
                     required property real timeOfDay
@@ -172,12 +181,20 @@ Item {
                             Layout.preferredWidth: 160
                         }
                         Text {
-                            text: chunks
+                            text: players
                             color: Theme.fg
                             font.pixelSize: 12
                             font.family: "monospace"
                             horizontalAlignment: Text.AlignRight
                             Layout.preferredWidth: 70
+                        }
+                        Text {
+                            text: chunks
+                            color: Theme.fg
+                            font.pixelSize: 12
+                            font.family: "monospace"
+                            horizontalAlignment: Text.AlignRight
+                            Layout.preferredWidth: 110
                         }
                         Text {
                             text: entities

@@ -19,28 +19,49 @@ Item {
     }
 
     property string filter: ""
-
-    function matches(entry) {
-        return page.filter === "" || entry.name.toLowerCase().includes(page.filter.toLowerCase());
-    }
+    readonly property var viewKeys: ["online", "offline", "operator", "banned", "whitelisted"]
+    property string view: "online"
 
     ListModel {
         id: dimCounts
     }
 
+    function inView(entry) {
+        switch (page.view) {
+        case "offline":
+            return !entry.isOnline;
+        case "operator":
+            return entry.operator;
+        case "banned":
+            return entry.banned;
+        case "whitelisted":
+            return entry.whitelisted;
+        default:
+            return entry.isOnline;
+        }
+    }
+
+    function matches(entry) {
+        if (page.filter !== "" && !entry.name.toLowerCase().includes(page.filter.toLowerCase()) && !entry.uuid.toLowerCase().includes(page.filter.toLowerCase()))
+            return false;
+        return page.inView(entry);
+    }
+
     function rebuildDims() {
         const counts = {};
-        const source = page.players;
+        const source = page.players.filter(page.inView);
         for (let i = 0; i < source.length; ++i) {
             const dim = String(source[i].dimension || "").replace("minecraft:", "");
+            if (dim === "")
+                continue;
             counts[dim] = (counts[dim] || 0) + 1;
         }
 
         const keys = Object.keys(counts).sort();
         for (let i = 0; i < keys.length; ++i) {
             const entry = {
-                "label": keys[i],
-                "count": counts[keys[i]]
+                "chipLabel": keys[i],
+                "chipCount": counts[keys[i]]
             };
             if (i < dimCounts.count)
                 dimCounts.set(i, entry);
@@ -52,7 +73,7 @@ Item {
     }
 
     function sync() {
-        const source = page.players.filter(matches);
+        const source = page.players.filter(page.matches);
 
         for (let i = 0; i < source.length; ++i) {
             const entry = source[i];
@@ -86,6 +107,9 @@ Item {
         function onFilterChanged() {
             page.sync();
         }
+        function onViewChanged() {
+            page.sync();
+        }
     }
 
     Component.onCompleted: sync()
@@ -108,10 +132,18 @@ Item {
             Layout.fillWidth: true
             spacing: 8
 
+            ThemedComboBox {
+                id: viewBox
+                Layout.preferredHeight: Theme.controlHeight
+                Layout.preferredWidth: 150
+                model: [qsTr("Online"), qsTr("Offline"), qsTr("Operator"), qsTr("Banned"), qsTr("Whitelisted")]
+                onCurrentIndexChanged: page.view = page.viewKeys[currentIndex]
+            }
+
             ThemedField {
                 id: search
                 Layout.preferredHeight: Theme.controlHeight
-                Layout.preferredWidth: 280
+                Layout.preferredWidth: 220
                 placeholderText: qsTr("Search players…")
                 onTextChanged: page.filter = text
             }
@@ -119,35 +151,11 @@ Item {
             Repeater {
                 model: dimCounts
 
-                delegate: Rectangle {
-                    required property string label
-                    required property int count
-
-                    implicitHeight: Theme.controlHeight
-                    implicitWidth: chipRow.implicitWidth + 16
-                    radius: 6
-                    color: Theme.surfaceAlt
-                    border.color: Theme.border
-                    border.width: 1
-
-                    Row {
-                        id: chipRow
-                        anchors.centerIn: parent
-                        spacing: 6
-
-                        Text {
-                            text: count
-                            color: Theme.fg
-                            font.pixelSize: 13
-                            font.bold: true
-                            font.family: "monospace"
-                        }
-                        Text {
-                            text: label
-                            color: Theme.fg
-                            font.pixelSize: 12
-                        }
-                    }
+                delegate: CountChip {
+                    required property string chipLabel
+                    required property int chipCount
+                    label: chipLabel
+                    count: chipCount
                 }
             }
 
@@ -192,7 +200,14 @@ Item {
                         color: Theme.fgMuted
                         font.pixelSize: 10
                         font.bold: true
-                        Layout.preferredWidth: 150
+                        Layout.preferredWidth: 186
+                    }
+                    Text {
+                        text: qsTr("UUID")
+                        color: Theme.fgMuted
+                        font.pixelSize: 10
+                        font.bold: true
+                        Layout.preferredWidth: 276
                     }
                     Text {
                         text: qsTr("PING")
@@ -207,7 +222,7 @@ Item {
                         color: Theme.fgMuted
                         font.pixelSize: 10
                         font.bold: true
-                        Layout.preferredWidth: 160
+                        Layout.preferredWidth: 120
                     }
                     Text {
                         text: qsTr("MODE")
@@ -252,6 +267,7 @@ Item {
                     delegate: PlayerRowDelegate {
                         width: ListView.view.width
                         controller: page.controller
+                        view: page.view
                         onReasonRequested: (action, playerName) => reasonDialog.open(action, playerName)
                     }
                 }
@@ -260,7 +276,22 @@ Item {
                     Layout.fillWidth: true
                     Layout.topMargin: 12
                     visible: rows.count === 0
-                    text: page.players.length === 0 ? qsTr("No players online.") : qsTr("No player matches “%1”.").arg(page.filter)
+                    text: {
+                        if (page.filter !== "")
+                            return qsTr("No player matches “%1”.").arg(page.filter);
+                        switch (page.view) {
+                        case "offline":
+                            return qsTr("No offline players.");
+                        case "operator":
+                            return qsTr("No operators.");
+                        case "banned":
+                            return qsTr("No banned players.");
+                        case "whitelisted":
+                            return qsTr("Whitelist is empty.");
+                        default:
+                            return qsTr("No players online.");
+                        }
+                    }
                     color: Theme.fgMuted
                     font.pixelSize: 12
                     horizontalAlignment: Text.AlignHCenter

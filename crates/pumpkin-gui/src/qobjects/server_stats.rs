@@ -188,7 +188,14 @@ impl qobject::ServerStats {
             self,
             player_count,
             set_player_count,
-            i32::try_from(snapshot.players.len()).unwrap_or(i32::MAX)
+            i32::try_from(
+                snapshot
+                    .players
+                    .iter()
+                    .filter(|player| player.online)
+                    .count()
+            )
+            .unwrap_or(i32::MAX)
         );
 
         // Qt has no 64-bit unsigned property type; bytes go over as f64, which stays exact well
@@ -316,6 +323,10 @@ fn world_to_variant(world: &crate::WorldRow) -> QVariant {
     map.insert(
         QString::from("entities"),
         QVariant::from(&i32::try_from(world.entities).unwrap_or(i32::MAX)),
+    );
+    map.insert(
+        QString::from("players"),
+        QVariant::from(&i32::try_from(world.players).unwrap_or(i32::MAX)),
     );
     map.insert(
         QString::from("timeOfDay"),

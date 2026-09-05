@@ -85,6 +85,13 @@ impl UserCache {
         self.add_internal(uuid, name);
     }
 
+    /// Read-only walk of cached profiles; does not bump recency.
+    pub fn iter_profiles(&self) -> impl Iterator<Item = (Uuid, &str)> + '_ {
+        self.profiles_by_uuid
+            .values()
+            .map(|entry| (entry.uuid, entry.name.as_str()))
+    }
+
     pub fn get_by_name(&mut self, name: &str) -> Option<UserCacheEntry> {
         let lowercase_name = name.to_ascii_lowercase();
         let mut profile = self.profiles_by_name.get(&lowercase_name).cloned();

@@ -46,6 +46,7 @@ fn main() {
             "qml/Card.qml",
             "qml/Meter.qml",
             "qml/Badge.qml",
+            "qml/CountChip.qml",
             "qml/Placeholder.qml",
             "qml/Worlds.qml",
             "qml/Players.qml",
@@ -69,6 +70,7 @@ fn main() {
                 "qml/icons/op.svg",
                 "qml/icons/kick.svg",
                 "qml/icons/ban.svg",
+                "qml/icons/copy.svg",
             ])
             .qt_module("Svg")
             // GCC 16 + Qt headers: QChar is incomplete in a SFINAE check inside libstdc++

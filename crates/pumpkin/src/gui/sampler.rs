@@ -1,8 +1,12 @@
 //! Turns live server state into [`Snapshot`]s for the window.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+
+use pumpkin_util::permission::PermissionLvl;
+use uuid::Uuid;
 
 use arc_swap::ArcSwap;
 use pumpkin_config::gui::GuiConfig;
@@ -79,7 +83,8 @@ fn spawn_fast_sampler(
             last_net = net;
             last_at = now;
 
-            let worlds = collect_worlds(&server, &last_worlds, &disk.per_world);
+            let players = collect_players(&server);
+            let worlds = collect_worlds(&server, &last_worlds, &disk.per_world, &players);
             last_worlds.clone_from(&worlds);
 
             snapshot.store(Arc::new(Snapshot {
@@ -95,7 +100,7 @@ fn spawn_fast_sampler(
                 tps: server.get_tps().min(f64::from(server.basic_config.tps)),
                 mspt: server.get_mspt(),
                 tick_times_nanos: tick_times(&server),
-                players: collect_players(&server),
+                players,
                 worlds,
                 worlds_size_bytes: disk.worlds_size,
                 disk_free: disk.free,
@@ -207,21 +212,87 @@ fn tick_times(server: &Server) -> Vec<i64> {
         .collect()
 }
 
+fn blank_player(uuid: Uuid, name: String) -> PlayerRow {
+    PlayerRow {
+        name,
+        uuid: uuid.to_string(),
+        ping_ms: -1,
+        dimension: String::new(),
+        gamemode: String::new(),
+        online_secs: 0,
+        online: false,
+        operator: false,
+        banned: false,
+        whitelisted: false,
+    }
+}
+
 fn collect_players(server: &Server) -> Vec<PlayerRow> {
-    let mut rows = Vec::new();
+    let mut by_uuid: HashMap<Uuid, PlayerRow> = HashMap::new();
 
     // `for_each_player` avoids the Vec that `get_all_players` allocates on every sample.
     server.for_each_player(|player| {
-        rows.push(PlayerRow {
-            name: player.gameprofile.name.clone(),
-            uuid: player.gameprofile.id.to_string(),
-            ping_ms: i32::try_from(player.ping.load(Ordering::Relaxed)).unwrap_or(i32::MAX),
-            dimension: player.world().dimension.minecraft_name.to_owned(),
-            gamemode: format!("{:?}", player.gamemode.load()).to_lowercase(),
-            online_secs: player.joined_at.elapsed().as_secs(),
-        });
+        let uuid = player.gameprofile.id;
+        let row = by_uuid
+            .entry(uuid)
+            .or_insert_with(|| blank_player(uuid, player.gameprofile.name.clone()));
+        row.name.clone_from(&player.gameprofile.name);
+        row.online = true;
+        row.ping_ms = i32::try_from(player.ping.load(Ordering::Relaxed)).unwrap_or(i32::MAX);
+        row.dimension = player.world().dimension.minecraft_name.to_owned();
+        row.gamemode = format!("{:?}", player.gamemode.load()).to_lowercase();
+        row.online_secs = player.joined_at.elapsed().as_secs();
+        row.operator |= player.permission_lvl.load() != PermissionLvl::Zero;
     });
 
+    if let Ok(ops) = server.data.operator_config.read() {
+        for entry in &ops.ops {
+            let row = by_uuid
+                .entry(entry.uuid)
+                .or_insert_with(|| blank_player(entry.uuid, entry.name.clone()));
+            if row.name.is_empty() {
+                row.name.clone_from(&entry.name);
+            }
+            row.operator = true;
+        }
+    }
+
+    if let Ok(bans) = server.data.banned_player_list.read() {
+        for entry in &bans.banned_players {
+            let row = by_uuid
+                .entry(entry.uuid)
+                .or_insert_with(|| blank_player(entry.uuid, entry.name.clone()));
+            if row.name.is_empty() {
+                row.name.clone_from(&entry.name);
+            }
+            row.banned = true;
+        }
+    }
+
+    if let Ok(whitelist) = server.data.whitelist_config.read() {
+        for entry in &whitelist.whitelist {
+            let row = by_uuid
+                .entry(entry.uuid)
+                .or_insert_with(|| blank_player(entry.uuid, entry.name.clone()));
+            if row.name.is_empty() {
+                row.name.clone_from(&entry.name);
+            }
+            row.whitelisted = true;
+        }
+    }
+
+    if let Ok(cache) = server.data.user_cache.read() {
+        for (uuid, name) in cache.iter_profiles() {
+            let row = by_uuid
+                .entry(uuid)
+                .or_insert_with(|| blank_player(uuid, name.to_owned()));
+            if row.name.is_empty() {
+                row.name = name.to_owned();
+            }
+        }
+    }
+
+    let mut rows: Vec<PlayerRow> = by_uuid.into_values().collect();
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     rows
 }
@@ -230,6 +301,7 @@ fn collect_worlds(
     server: &Server,
     previous: &[WorldRow],
     sizes: &[(String, u64)],
+    players: &[PlayerRow],
 ) -> Vec<WorldRow> {
     server
         .worlds
@@ -260,11 +332,17 @@ fn collect_worlds(
                         .and_then(|row| row.size_bytes)
                 });
 
+            let player_count = players
+                .iter()
+                .filter(|player| player.online && player.dimension == dimension)
+                .count();
+
             WorldRow {
                 name,
                 dimension,
                 loaded_chunks,
                 entities: world.entities.load().len(),
+                players: player_count,
                 size_bytes,
                 time_of_day,
                 weather,

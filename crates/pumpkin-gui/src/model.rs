@@ -133,6 +133,10 @@ pub struct PlayerRow {
     pub dimension: String,
     pub gamemode: String,
     pub online_secs: u64,
+    pub online: bool,
+    pub operator: bool,
+    pub banned: bool,
+    pub whitelisted: bool,
 }
 
 /// One row of the world table.
@@ -142,6 +146,7 @@ pub struct WorldRow {
     pub dimension: String,
     pub loaded_chunks: usize,
     pub entities: usize,
+    pub players: usize,
     /// `None` until the slow disk sampler has run once.
     pub size_bytes: Option<u64>,
     pub time_of_day: i64,

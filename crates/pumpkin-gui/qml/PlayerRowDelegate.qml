@@ -7,11 +7,17 @@ Rectangle {
 
     // The `Players` QObject; actions go straight back to it.
     required property var controller
+    required property string view
     required property string name
+    required property string uuid
     required property int ping
     required property string dimension
     required property string gamemode
     required property real online
+    required property bool isOnline
+    required property bool operator
+    required property bool banned
+    required property bool whitelisted
 
     signal reasonRequested(string action, string playerName)
 
@@ -28,18 +34,30 @@ Rectangle {
         anchors.rightMargin: 0
         spacing: 12
 
-        Text {
-            text: row.name
-            color: Theme.fg
-            font.pixelSize: 12
-            elide: Text.ElideRight
-            Layout.preferredWidth: 150
+        CopyableText {
+            compact: true
+            mono: false
+            value: row.name
+            Layout.preferredWidth: 186
+            Layout.minimumWidth: 186
+            Layout.maximumWidth: 186
+            Layout.fillWidth: false
+            Layout.alignment: Qt.AlignVCenter
+        }
+
+        CopyableText {
+            compact: true
+            value: row.uuid
+            Layout.preferredWidth: 276
+            Layout.minimumWidth: 276
+            Layout.maximumWidth: 276
+            Layout.fillWidth: false
+            Layout.alignment: Qt.AlignVCenter
         }
 
         Text {
-            text: row.ping + " ms"
-            // Ping uses the same green/yellow/red scale as everything else, saturating at 300 ms.
-            color: Theme.loadColor(row.ping / 300)
+            text: row.isOnline ? (row.ping + " ms") : "–"
+            color: row.isOnline ? Theme.loadColor(row.ping / 300) : Theme.fgMuted
             font.pixelSize: 12
             font.family: "monospace"
             horizontalAlignment: Text.AlignRight
@@ -47,23 +65,22 @@ Rectangle {
         }
 
         Text {
-            // `minecraft:overworld` is noise in a table; the namespace is almost always vanilla.
-            text: row.dimension.replace("minecraft:", "")
+            text: row.dimension === "" ? "–" : row.dimension.replace("minecraft:", "")
             color: Theme.fgMuted
             font.pixelSize: 12
             elide: Text.ElideRight
-            Layout.preferredWidth: 160
+            Layout.preferredWidth: 120
         }
 
         Text {
-            text: row.gamemode
+            text: row.gamemode === "" ? "–" : row.gamemode
             color: Theme.fgMuted
             font.pixelSize: 12
             Layout.preferredWidth: 80
         }
 
         Text {
-            text: Format.duration(row.online)
+            text: row.isOnline ? Format.duration(row.online) : "–"
             color: Theme.fgMuted
             font.pixelSize: 12
             Layout.preferredWidth: 70
@@ -77,6 +94,7 @@ Rectangle {
             spacing: 6
 
             IconButton {
+                visible: row.view === "online" || row.view === "offline"
                 source: Icons.op
                 tint: Theme.accent
                 tooltip: qsTr("Grant operator")
@@ -85,6 +103,7 @@ Rectangle {
             }
 
             IconButton {
+                visible: row.view === "online"
                 source: Icons.kick
                 tint: Theme.warn
                 tooltip: qsTr("Kick…")
@@ -93,11 +112,36 @@ Rectangle {
             }
 
             IconButton {
+                visible: row.view === "online" || row.view === "offline"
                 source: Icons.ban
                 tint: Theme.danger
                 tooltip: qsTr("Ban…")
                 enabled: row.controller.hasCommands
                 onClicked: row.reasonRequested("ban", row.name)
+            }
+
+            IconButton {
+                visible: row.view === "operator"
+                source: Icons.op
+                tint: Theme.danger
+                tooltip: qsTr("Revoke operator")
+                enabled: row.controller.hasCommands
+                onClicked: row.controller.deop(row.name)
+            }
+
+            ThemedButton {
+                visible: row.view === "banned"
+                text: qsTr("Pardon")
+                enabled: row.controller.hasCommands
+                onClicked: row.controller.pardon(row.name)
+            }
+
+            ThemedButton {
+                visible: row.view === "whitelisted"
+                text: qsTr("Remove")
+                accent: Theme.danger
+                enabled: row.controller.hasCommands
+                onClicked: row.controller.unwhitelist(row.name)
             }
         }
     }
