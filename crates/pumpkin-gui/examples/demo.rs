@@ -23,7 +23,7 @@ struct DemoCommands {
 impl GuiCommands for DemoCommands {
     fn submit(&self, line: String) {
         self.logs
-            .push(LogLevel::Info, "demo".to_owned(), format!("> {line}"));
+            .push(LogLevel::Info, "demo".to_owned(), &format!("> {line}"));
     }
 
     fn completions(&self, line: &str, _cursor: usize) -> Vec<String> {
@@ -35,11 +35,8 @@ impl GuiCommands for DemoCommands {
     }
 
     fn request_stop(&self) {
-        self.logs.push(
-            LogLevel::Warn,
-            "demo".to_owned(),
-            "stop requested".to_owned(),
-        );
+        self.logs
+            .push(LogLevel::Warn, "demo".to_owned(), "stop requested");
     }
 }
 
@@ -54,6 +51,14 @@ fn main() {
         logs: side.logs.clone(),
     });
     let _ = side.commands.set(commands);
+
+    // Shows off what `to_pretty_console()`-style ANSI (colour, bold) and an OSC 8 hyperlink look
+    // like once parsed, plus a bare URL that gets auto-linkified with no escape codes at all.
+    side.logs.push(
+        LogLevel::Info,
+        "demo".to_owned(),
+        "\u{1b}[1m\u{1b}[32mWelcome\u{1b}[0m to \u{1b}]8;;https://pumpkinmc.org\u{1b}\\Pumpkin\u{1b}]8;;\u{1b}\\! See https://example.com/docs for details.",
+    );
 
     let sampler_side = side.clone();
     let sampler = std::thread::Builder::new()
@@ -159,7 +164,7 @@ fn sample_loop(side: &GuiSide) {
         side.logs.push(
             LogLevel::Info,
             "demo".to_owned(),
-            format!("sampled at {elapsed:.1}s"),
+            &format!("sampled at {elapsed:.1}s"),
         );
 
         std::thread::sleep(Duration::from_millis(500));

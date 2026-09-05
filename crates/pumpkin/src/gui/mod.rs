@@ -50,35 +50,14 @@ pub fn attach(server: &Arc<Server>, side: &GuiSide, config: &GuiConfig) {
     let _ = side.commands.set(commands);
 
     // Console command replies go through `println!`, not `tracing`, so the log layer cannot see
-    // them
+    // them. `text.to_pretty_console()` (e.g. `/tps`, join/leave messages) carries real ANSI
+    // colours and OSC 8 hyperlinks, same as it does in the terminal
     let logs = side.logs.clone();
     command::set_console_sink(Box::new(move |line| {
-        logs.push(LogLevel::Info, "console".to_owned(), strip_ansi(line));
+        logs.push(LogLevel::Info, "console".to_owned(), line);
     }));
 
     sampler::spawn(server, side, config);
-}
-
-/// Removes ANSI colour codes.
-///
-/// Mirrors what the file logger does; the window colours lines itself from the level.
-fn strip_ansi(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    let mut chars = text.chars();
-
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            for escape in chars.by_ref() {
-                if escape.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-
-    result
 }
 
 struct ServerCommands {

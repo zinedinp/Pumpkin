@@ -175,7 +175,10 @@ impl qobject::Console {
         if name.is_empty() {
             return false;
         }
-        if !name.ends_with(".log") {
+        let has_log_extension = std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("log"));
+        if !has_log_extension {
             name.push_str(".log");
         }
 
@@ -235,6 +238,10 @@ fn line_to_variant(line: &crate::LogLine) -> QVariant {
     map.insert(
         QString::from("message"),
         QVariant::from(&QString::from(&line.message)),
+    );
+    map.insert(
+        QString::from("html"),
+        QVariant::from(&QString::from(&line.html)),
     );
 
     QVariant::from(&map)

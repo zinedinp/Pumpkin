@@ -36,10 +36,6 @@ Item {
         return true;
     }
 
-    function escapeHtml(text) {
-        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    }
-
     function colorHex(c) {
         function channel(v) {
             return Math.round(v * 255).toString(16).padStart(2, "0");
@@ -47,13 +43,20 @@ Item {
         return "#" + channel(c.r) + channel(c.g) + channel(c.b);
     }
 
-    // One log entry is one rich-text run. The whole document is wrapped in a single
-    // "white-space:pre-wrap" block (see htmlFor) rather than styling every span, since the
-    // property is unreliable on inline elements in Qt's rich-text subset but well supported on
-    // a block.
-    function lineHtml(level, message) {
-        return "<span style=\"color:" + view.colorHex(view.levelColor(level)) + "\">"
-            + view.escapeHtml(message) + "</span><br>";
+    // Must match `DEFAULT_LINK_COLOR` in ansi.rs. A link with no ANSI colour of its own comes
+    // through with this placeholder rather than a real colour: Qt Quick's TextEdit has no
+    // `linkColor` property, and a `<a>` with no explicit colour renders in Qt's own built-in
+    // link blue no matter what colour its ancestors have.
+    readonly property string defaultLinkColorToken: "@default-link-color@"
+
+    // `row.html` is already escaped, coloured (real ANSI colours, same as the terminal) and
+    // link-ified by the Rust side; the level colour here is only the default.
+    function lineHtml(level, html) {
+        const hex = view.colorHex(view.levelColor(level));
+        // `row.html` arrives as a QVariant-backed string, not a plain JS string, so
+        // `String.prototype.replaceAll` is not guaranteed to exist on it.
+        const resolved = String(html).split(view.defaultLinkColorToken).join(hex);
+        return "<span style=\"color:" + hex + "\">" + resolved + "</span><br>";
     }
 
     function htmlFor(first) {
@@ -61,7 +64,7 @@ Item {
         for (let i = first; i < logModel.count; ++i) {
             const row = logModel.get(i);
             if (view.visibleLine(row.level, row.message))
-                body += view.lineHtml(row.level, row.message);
+                body += view.lineHtml(row.level, row.html);
         }
         return "<div style=\"white-space:pre-wrap;\">" + body + "</div>";
     }
@@ -268,8 +271,15 @@ Item {
                     readOnly: true
                     selectByMouse: true
                     // Without this, selecting text then clicking "Copy" (or anything else that
-                    // steals focus) clears the highlight immediately.
+                    // steals focus) clears the highlight.
                     persistentSelection: true
+                    // A plain click activates a link; click-and-drag still starts a selection
+                    // instead, same as any Qt rich-text view.
+                    onLinkActivated: link => Qt.openUrlExternally(link)
+
+                    HoverHandler {
+                        cursorShape: logView.hoveredLink !== "" ? Qt.PointingHandCursor : Qt.IBeamCursor
+                    }
                 }
             }
 

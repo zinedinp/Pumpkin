@@ -4,6 +4,7 @@
 //! [`Snapshot`] and hands over a [`GuiCommands`] sink, and the window only reads them. That keeps
 //! the dependency one-directional (`pumpkin` -> `pumpkin-gui`)
 
+mod ansi;
 mod model;
 mod qobjects;
 mod system;

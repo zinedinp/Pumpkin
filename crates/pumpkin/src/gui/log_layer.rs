@@ -30,10 +30,13 @@ impl<S: Subscriber> Layer<S> for GuiLogLayer {
             return;
         }
 
+        // Kept as-is, ANSI and all: `pumpkin_gui::LogRing::push` parses it into the window's
+        // rendering, so a colourised message (chat, join/leave, plugin output via `colored`)
+        // shows the same colours here as it does in the terminal.
         self.ring.push(
             level_of(*metadata.level()),
             metadata.target().to_owned(),
-            super::strip_ansi(&visitor.0),
+            &visitor.0,
         );
     }
 }
