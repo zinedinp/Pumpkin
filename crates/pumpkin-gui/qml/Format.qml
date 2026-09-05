@@ -43,12 +43,12 @@ QtObject {
         return seconds + "s";
     }
 
-    // Minecraft days are 24000 ticks starting at 06:00.
     function gameTime(timeOfDay) {
+        const day = Math.floor(timeOfDay / 24000) + 1;
         const ticks = ((timeOfDay % 24000) + 24000) % 24000;
         const totalMinutes = (ticks * 60 / 1000 + 360) % 1440;
         const hours = Math.floor(totalMinutes / 60);
         const minutes = Math.floor(totalMinutes % 60);
-        return ("0" + hours).slice(-2) + ":" + ("0" + minutes).slice(-2);
+        return qsTr("Day %1 · %2:%3").arg(day).arg(("0" + hours).slice(-2)).arg(("0" + minutes).slice(-2));
     }
 }

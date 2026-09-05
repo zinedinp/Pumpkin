@@ -371,18 +371,25 @@ fn collect_worlds(
 fn world_time_and_weather(world: &crate::world::World) -> (i64, String) {
     let time_of_day = world.level_time.lock().map_or(0, |time| time.time_of_day);
 
-    let weather = world.weather.lock().map_or_else(
-        |_| "unknown".to_owned(),
-        |weather| {
-            if weather.thundering {
-                "thunder".to_owned()
-            } else if weather.raining {
-                "rain".to_owned()
-            } else {
-                "clear".to_owned()
-            }
-        },
-    );
+    // Weather rides the overworld's day/night timeline, so `timelines` (not `has_skylight` -
+    // the end also has a skylight for lighting purposes) is what actually distinguishes it: only
+    // dimensions sharing that timeline (overworld, overworld_caves) have weather in vanilla.
+    let weather = if world.dimension.timelines == Some("#minecraft:in_overworld") {
+        world.weather.lock().map_or_else(
+            |_| "unknown".to_owned(),
+            |weather| {
+                if weather.thundering {
+                    "thunder".to_owned()
+                } else if weather.raining {
+                    "rain".to_owned()
+                } else {
+                    "clear".to_owned()
+                }
+            },
+        )
+    } else {
+        "none".to_owned()
+    };
 
     (time_of_day, weather)
 }

@@ -128,7 +128,7 @@ fn sample_loop(side: &GuiSide) {
                     entities: 137,
                     players: 2,
                     size_bytes: Some(512 * 1024 * 1024),
-                    time_of_day: (elapsed as i64 * 20) % 24_000,
+                    time_of_day: elapsed as i64 * 2000,
                     weather: "clear".to_owned(),
                 },
                 WorldRow {
@@ -139,7 +139,7 @@ fn sample_loop(side: &GuiSide) {
                     players: 1,
                     size_bytes: Some(48 * 1024 * 1024),
                     time_of_day: 0,
-                    weather: "clear".to_owned(),
+                    weather: "none".to_owned(),
                 },
                 WorldRow {
                     name: "world".to_owned(),
@@ -149,7 +149,7 @@ fn sample_loop(side: &GuiSide) {
                     players: 1,
                     size_bytes: Some(16 * 1024 * 1024),
                     time_of_day: 0,
-                    weather: "clear".to_owned(),
+                    weather: "none".to_owned(),
                 },
             ],
             worlds_size_bytes: Some(512 * 1024 * 1024),

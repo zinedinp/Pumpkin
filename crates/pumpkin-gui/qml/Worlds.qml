@@ -39,6 +39,8 @@ Item {
             return qsTr("Thunder");
         case "clear":
             return qsTr("Clear");
+        case "none":
+            return "–";
         default:
             return weather;
         }
@@ -124,7 +126,7 @@ Item {
                     color: Theme.accent
                     font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
-                    Layout.preferredWidth: 50
+                    Layout.preferredWidth: 110
                     Layout.leftMargin: Theme.tableCellPad
                     Layout.rightMargin: Theme.tableCellPad
                 }
@@ -259,9 +261,10 @@ Item {
                             color: Theme.fgMuted
                             font.pixelSize: Theme.tableCellSize
                             font.family: "monospace"
+                            elide: Text.ElideRight
                             verticalAlignment: Text.AlignVCenter
                             Layout.fillHeight: true
-                            Layout.preferredWidth: 50
+                            Layout.preferredWidth: 110
                             Layout.leftMargin: Theme.tableCellPad
                             Layout.rightMargin: Theme.tableCellPad
                         }
