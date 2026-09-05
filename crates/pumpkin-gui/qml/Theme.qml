@@ -38,6 +38,12 @@ QtObject {
 
     readonly property int radius: 8
     readonly property int gap: 12
+    // Shared control height so the player search field and the whitelist row line up.
+    readonly property int controlHeight: 32
+
+    function withAlpha(c, alpha) {
+        return Qt.rgba(c.r, c.g, c.b, alpha);
+    }
 
     // Shared thresholds so the TPS badge, the tick graph and the core bars agree on what
     // "healthy" looks like.

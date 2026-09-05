@@ -12,6 +12,9 @@ TextField {
     selectionColor: Theme.accent
     selectedTextColor: Theme.surface
     font.pixelSize: 12
+    implicitHeight: Theme.controlHeight
+    leftPadding: 10
+    rightPadding: 10
 
     background: Rectangle {
         color: Theme.background

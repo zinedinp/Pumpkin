@@ -24,6 +24,33 @@ Item {
         return page.filter === "" || entry.name.toLowerCase().includes(page.filter.toLowerCase());
     }
 
+    ListModel {
+        id: dimCounts
+    }
+
+    function rebuildDims() {
+        const counts = {};
+        const source = page.players;
+        for (let i = 0; i < source.length; ++i) {
+            const dim = String(source[i].dimension || "").replace("minecraft:", "");
+            counts[dim] = (counts[dim] || 0) + 1;
+        }
+
+        const keys = Object.keys(counts).sort();
+        for (let i = 0; i < keys.length; ++i) {
+            const entry = {
+                "label": keys[i],
+                "count": counts[keys[i]]
+            };
+            if (i < dimCounts.count)
+                dimCounts.set(i, entry);
+            else
+                dimCounts.append(entry);
+        }
+        if (dimCounts.count > keys.length)
+            dimCounts.remove(keys.length, dimCounts.count - keys.length);
+    }
+
     function sync() {
         const source = page.players.filter(matches);
 
@@ -39,6 +66,16 @@ Item {
 
         if (rows.count > source.length)
             rows.remove(source.length, rows.count - source.length);
+
+        page.rebuildDims();
+    }
+
+    function addWhitelist() {
+        const name = whitelistField.text.trim();
+        if (name === "")
+            return;
+        page.controller.whitelist(name);
+        whitelistField.clear();
     }
 
     Connections {
@@ -73,20 +110,66 @@ Item {
 
             ThemedField {
                 id: search
-                Layout.fillWidth: true
-                Layout.maximumWidth: 280
+                Layout.preferredHeight: Theme.controlHeight
+                Layout.preferredWidth: 280
                 placeholderText: qsTr("Search players…")
                 onTextChanged: page.filter = text
             }
 
-            Text {
-                text: page.filter === "" ? qsTr("%1 online").arg(rows.count) : qsTr("%1 of %2").arg(rows.count).arg(page.players.length)
-                color: Theme.fgMuted
-                font.pixelSize: 12
+            Repeater {
+                model: dimCounts
+
+                delegate: Rectangle {
+                    required property string label
+                    required property int count
+
+                    implicitHeight: Theme.controlHeight
+                    implicitWidth: chipRow.implicitWidth + 16
+                    radius: 6
+                    color: Theme.surfaceAlt
+                    border.color: Theme.border
+                    border.width: 1
+
+                    Row {
+                        id: chipRow
+                        anchors.centerIn: parent
+                        spacing: 6
+
+                        Text {
+                            text: count
+                            color: Theme.fg
+                            font.pixelSize: 13
+                            font.bold: true
+                            font.family: "monospace"
+                        }
+                        Text {
+                            text: label
+                            color: Theme.fg
+                            font.pixelSize: 12
+                        }
+                    }
+                }
             }
 
             Item {
                 Layout.fillWidth: true
+            }
+
+            ThemedField {
+                id: whitelistField
+                Layout.preferredHeight: Theme.controlHeight
+                Layout.preferredWidth: 220
+                enabled: page.controller.hasCommands
+                placeholderText: qsTr("Player name…")
+                onAccepted: page.addWhitelist()
+            }
+
+            ThemedButton {
+                text: qsTr("Whitelist")
+                accent: Theme.accent
+                Layout.preferredHeight: Theme.controlHeight
+                enabled: page.controller.hasCommands && whitelistField.text.trim() !== ""
+                onClicked: page.addWhitelist()
             }
         }
 

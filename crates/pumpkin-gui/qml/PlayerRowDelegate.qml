@@ -15,7 +15,7 @@ Rectangle {
 
     signal reasonRequested(string action, string playerName)
 
-    height: 34
+    height: 48
     color: hover.hovered ? Theme.surfaceAlt : "transparent"
 
     HoverHandler {
@@ -73,21 +73,12 @@ Rectangle {
             Layout.fillWidth: true
         }
 
-        // Dimmed until the row is hovered so the table reads as data rather than a control
-        // panel, but not so faint that it is unclear the actions exist.
         RowLayout {
-            spacing: 2
-            opacity: hover.hovered ? 1 : 0.55
-            Behavior on opacity {
-                enabled: Theme.animations
-                NumberAnimation {
-                    duration: 120
-                }
-            }
+            spacing: 6
 
             IconButton {
                 source: Icons.op
-                tint: hover.hovered ? Theme.accent : Theme.fg
+                tint: Theme.accent
                 tooltip: qsTr("Grant operator")
                 enabled: row.controller.hasCommands
                 onClicked: row.controller.op(row.name)
@@ -95,7 +86,7 @@ Rectangle {
 
             IconButton {
                 source: Icons.kick
-                tint: hover.hovered ? Theme.warn : Theme.fg
+                tint: Theme.warn
                 tooltip: qsTr("Kick…")
                 enabled: row.controller.hasCommands
                 onClicked: row.reasonRequested("kick", row.name)
@@ -103,7 +94,7 @@ Rectangle {
 
             IconButton {
                 source: Icons.ban
-                tint: hover.hovered ? Theme.danger : Theme.fg
+                tint: Theme.danger
                 tooltip: qsTr("Ban…")
                 enabled: row.controller.hasCommands
                 onClicked: row.reasonRequested("ban", row.name)

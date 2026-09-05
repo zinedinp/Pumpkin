@@ -7,7 +7,7 @@ Button {
 
     property color accent: Theme.fg
 
-    implicitHeight: 30
+    implicitHeight: Theme.controlHeight
     leftPadding: 14
     rightPadding: 14
 

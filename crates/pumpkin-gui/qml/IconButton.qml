@@ -16,16 +16,25 @@ ToolButton {
 
     icon.source: source
     icon.color: enabled ? tint : Theme.fgMuted
-    icon.width: 20
-    icon.height: 20
+    icon.width: 22
+    icon.height: 22
     display: AbstractButton.IconOnly
-    implicitWidth: 32
-    implicitHeight: 30
-    opacity: enabled ? 1 : 0.4
+    implicitWidth: 36
+    implicitHeight: 36
+    opacity: enabled ? 1 : 0.45
 
     background: Rectangle {
-        radius: 4
-        color: button.hovered ? Theme.border : "transparent"
+        radius: 6
+        color: {
+            if (!button.enabled)
+                return "transparent";
+            const rest = Theme.dark ? 0.22 : 0.18;
+            const hover = Theme.dark ? 0.34 : 0.28;
+            const down = Theme.dark ? 0.46 : 0.38;
+            return Theme.withAlpha(button.tint, button.down ? down : button.hovered ? hover : rest);
+        }
+        border.color: button.enabled ? Theme.withAlpha(button.tint, Theme.dark ? 0.7 : 0.65) : Theme.border
+        border.width: 1
     }
 
     ToolTip.visible: hovered && tooltip !== ""

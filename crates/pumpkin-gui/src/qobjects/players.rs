@@ -51,6 +51,10 @@ pub mod qobject {
         /// Bans a player; an empty `reason` uses the server default.
         #[qinvokable]
         fn ban(&self, name: &QString, reason: &QString);
+
+        /// Adds a name to the whitelist (`whitelist add`).
+        #[qinvokable]
+        fn whitelist(&self, name: &QString);
     }
 }
 
@@ -108,6 +112,10 @@ impl qobject::PlayerList {
 
     pub fn ban(&self, name: &QString, reason: &QString) {
         self.run_targeted("ban", name, Some(reason));
+    }
+
+    pub fn whitelist(&self, name: &QString) {
+        self.run_targeted("whitelist add", name, None);
     }
 
     /// Builds `<command> <name> [reason]` and submits it.

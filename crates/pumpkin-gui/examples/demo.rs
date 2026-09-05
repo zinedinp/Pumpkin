@@ -144,16 +144,21 @@ fn sample_loop(side: &GuiSide) {
 }
 
 fn demo_players(elapsed: f64) -> Vec<PlayerRow> {
-    ["Alex", "Steve", "Herobrine"]
-        .into_iter()
-        .enumerate()
-        .map(|(index, name)| PlayerRow {
-            name: name.to_owned(),
-            uuid: format!("00000000-0000-0000-0000-00000000000{index}"),
-            ping_ms: 20 + i32::try_from(index).unwrap_or(0) * 15,
-            dimension: "minecraft:overworld".to_owned(),
-            gamemode: "survival".to_owned(),
-            online_secs: elapsed as u64,
-        })
-        .collect()
+    [
+        ("Alex", "minecraft:overworld"),
+        ("Steve", "minecraft:the_nether"),
+        ("Herobrine", "minecraft:the_end"),
+        ("Notch", "minecraft:overworld"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, dimension))| PlayerRow {
+        name: name.to_owned(),
+        uuid: format!("00000000-0000-0000-0000-00000000000{index}"),
+        ping_ms: 20 + i32::try_from(index).unwrap_or(0) * 15,
+        dimension: dimension.to_owned(),
+        gamemode: "survival".to_owned(),
+        online_secs: elapsed as u64,
+    })
+    .collect()
 }
