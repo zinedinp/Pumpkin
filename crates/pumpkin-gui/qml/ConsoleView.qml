@@ -131,19 +131,28 @@ Item {
 
                 ScrollBar.vertical: ScrollBar {}
 
-                delegate: Text {
+                // Height lives on the wrapper, not the Text: wrapping Text binds
+                // implicitHeight to height and would loop.
+                delegate: Item {
                     required property string level
                     required property string message
 
+                    readonly property bool shown: view.visibleLine(level, message)
+
                     width: ListView.view.width
-                    visible: view.visibleLine(level, message)
-                    height: visible ? implicitHeight : 0
-                    text: message
-                    color: view.levelColor(level)
-                    font.family: "monospace"
-                    font.pixelSize: 12
-                    wrapMode: Text.Wrap
-                    textFormat: Text.PlainText
+                    height: shown ? line.implicitHeight : 0
+                    visible: shown
+
+                    Text {
+                        id: line
+                        width: parent.width
+                        text: message
+                        color: view.levelColor(level)
+                        font.family: "monospace"
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                        textFormat: Text.PlainText
+                    }
                 }
             }
 
