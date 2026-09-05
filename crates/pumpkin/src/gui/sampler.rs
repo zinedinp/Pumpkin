@@ -12,6 +12,7 @@ use arc_swap::ArcSwap;
 use pumpkin_config::gui::GuiConfig;
 use pumpkin_gui::{GuiSide, PlayerRow, ServerMeta, Snapshot, SystemSampler, WorldRow};
 
+use crate::net::ClientPlatform;
 use crate::server::Server;
 use crate::{SHOULD_STOP, STOP_INTERRUPT};
 
@@ -216,6 +217,7 @@ fn blank_player(uuid: Uuid, name: String) -> PlayerRow {
     PlayerRow {
         name,
         uuid: uuid.to_string(),
+        edition: String::new(),
         ping_ms: -1,
         dimension: String::new(),
         gamemode: String::new(),
@@ -237,6 +239,10 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
             .entry(uuid)
             .or_insert_with(|| blank_player(uuid, player.gameprofile.name.clone()));
         row.name.clone_from(&player.gameprofile.name);
+        row.edition = match player.client.as_ref() {
+            ClientPlatform::Java(_) => "java".to_owned(),
+            ClientPlatform::Bedrock(_) => "bedrock".to_owned(),
+        };
         row.online = true;
         row.ping_ms = i32::try_from(player.ping.load(Ordering::Relaxed)).unwrap_or(i32::MAX);
         row.dimension = player.world().dimension.minecraft_name.to_owned();
@@ -282,18 +288,29 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
     }
 
     if let Ok(cache) = server.data.user_cache.read() {
-        for (uuid, name) in cache.iter_profiles() {
+        for (uuid, name, edition) in cache.iter_profiles() {
             let row = by_uuid
                 .entry(uuid)
                 .or_insert_with(|| blank_player(uuid, name.to_owned()));
             if row.name.is_empty() {
                 row.name = name.to_owned();
             }
+            if row.edition.is_empty() {
+                if let Some(edition) = edition {
+                    row.edition = edition.to_owned();
+                }
+            }
         }
     }
 
     let mut rows: Vec<PlayerRow> = by_uuid.into_values().collect();
-    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    // Java + Bedrock on the same gamertag must stay in a total order
+    rows.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.edition.cmp(&right.edition))
+            .then_with(|| left.uuid.cmp(&right.uuid))
+    });
     rows
 }
 

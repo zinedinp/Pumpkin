@@ -110,17 +110,24 @@ ApplicationWindow {
                     color: Theme.rule
                 }
 
-                RowLayout {
-                    anchors.fill: parent
+                Row {
+                    id: headerStatus
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 16
+                    anchors.right: stopButton.left
                     anchors.rightMargin: 12
+                    height: parent.height
                     spacing: 16
+                    clip: true
+                    z: 0
 
                     Text {
                         text: stats.serverReady ? qsTr("Pumpkin %1").arg(stats.pumpkinVersion) : qsTr("Starting…")
                         color: Theme.fg
                         font.pixelSize: 15
                         font.bold: true
+                        anchors.verticalCenter: parent.verticalCenter
                     }
 
                     Badge {
@@ -128,6 +135,7 @@ ApplicationWindow {
                         value: stats.tps.toFixed(1)
                         accent: Theme.tpsColor(stats.tps)
                         visible: stats.serverReady
+                        anchors.verticalCenter: parent.verticalCenter
                     }
 
                     Badge {
@@ -135,6 +143,7 @@ ApplicationWindow {
                         value: stats.playerCount
                         accent: Theme.accent
                         visible: stats.serverReady
+                        anchors.verticalCenter: parent.verticalCenter
                     }
 
                     Badge {
@@ -142,32 +151,31 @@ ApplicationWindow {
                         value: Format.duration(stats.uptimeSecs)
                         accent: Theme.fgMuted
                         visible: stats.serverReady
+                        anchors.verticalCenter: parent.verticalCenter
                     }
+                }
 
-                    Item {
-                        Layout.fillWidth: true
-                    }
+                ThemedButton {
+                    id: stopButton
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                    z: 1
+                    text: qsTr("Stop Server")
+                    accent: Theme.danger
+                    enabled: consoleController.hasCommands
+                    onClicked: root.stopAndClose()
+                }
 
-                    // Centred between the status badges and the theme toggle: it is the one
-                    // action in the header, and it should not sit next to a harmless toggle.
-                    ThemedButton {
-                        text: qsTr("Stop Server")
-                        accent: Theme.danger
-                        enabled: consoleController.hasCommands
-                        onClicked: root.stopAndClose()
-                    }
-
-                    Item {
-                        Layout.fillWidth: true
-                    }
-
-                    ToolButton {
-                        text: Theme.dark ? "☀" : "☾"
-                        font.pixelSize: 16
-                        onClicked: Theme.toggle()
-                        ToolTip.visible: hovered
-                        ToolTip.text: Theme.dark ? qsTr("Light theme") : qsTr("Dark theme")
-                    }
+                ToolButton {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.rightMargin: 12
+                    z: 1
+                    text: Theme.dark ? "☀" : "☾"
+                    font.pixelSize: 16
+                    onClicked: Theme.toggle()
+                    ToolTip.visible: hovered
+                    ToolTip.text: Theme.dark ? qsTr("Light theme") : qsTr("Dark theme")
                 }
             }
 

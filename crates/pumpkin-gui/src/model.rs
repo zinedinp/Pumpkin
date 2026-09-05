@@ -129,6 +129,8 @@ impl LogRing {
 pub struct PlayerRow {
     pub name: String,
     pub uuid: String,
+    /// `"java"`, `"bedrock"`, or empty when the last join did not record an edition.
+    pub edition: String,
     pub ping_ms: i32,
     pub dimension: String,
     pub gamemode: String,

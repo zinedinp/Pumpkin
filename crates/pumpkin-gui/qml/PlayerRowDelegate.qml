@@ -10,6 +10,7 @@ Rectangle {
     required property string view
     required property string name
     required property string uuid
+    required property string edition
     required property int ping
     required property string dimension
     required property string gamemode
@@ -44,6 +45,23 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             Layout.leftMargin: Theme.tableEdge
             Layout.rightMargin: Theme.tableCellPad
+        }
+
+        TableVRule {}
+
+        Item {
+            Layout.preferredWidth: 78
+            Layout.minimumWidth: 78
+            Layout.maximumWidth: 78
+            Layout.fillHeight: true
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableCellPad
+
+            EditionTag {
+                edition: row.edition
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
+            }
         }
 
         TableVRule {}

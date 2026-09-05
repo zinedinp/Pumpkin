@@ -15,6 +15,8 @@ const USER_CACHE_MRU_LIMIT: usize = 1000;
 pub struct UserCacheEntry {
     pub uuid: Uuid,
     pub name: String,
+    /// `"java"` / `"bedrock"` from the last join; `None` on older cache files.
+    pub edition: Option<String>,
     expiration_date: OffsetDateTime,
     last_access: u64,
 }
@@ -25,6 +27,8 @@ struct UserCacheEntryDisk {
     uuid: Uuid,
     name: String,
     expires_on: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edition: Option<String>,
 }
 
 #[derive(Default)]
@@ -69,6 +73,7 @@ impl UserCache {
                 uuid: entry.uuid,
                 name: entry.name,
                 expires_on: format_cache_date(entry.expiration_date),
+                edition: entry.edition,
             })
             .collect();
 
@@ -81,15 +86,15 @@ impl UserCache {
         }
     }
 
-    pub fn upsert(&mut self, uuid: Uuid, name: String) {
-        self.add_internal(uuid, name);
+    pub fn upsert(&mut self, uuid: Uuid, name: String, edition: Option<&str>) {
+        self.add_internal(uuid, name, edition.map(str::to_owned));
     }
 
     /// Read-only walk of cached profiles; does not bump recency.
-    pub fn iter_profiles(&self) -> impl Iterator<Item = (Uuid, &str)> + '_ {
+    pub fn iter_profiles(&self) -> impl Iterator<Item = (Uuid, &str, Option<&str>)> + '_ {
         self.profiles_by_uuid
             .values()
-            .map(|entry| (entry.uuid, entry.name.as_str()))
+            .map(|entry| (entry.uuid, entry.name.as_str(), entry.edition.as_deref()))
     }
 
     pub fn get_by_name(&mut self, name: &str) -> Option<UserCacheEntry> {
@@ -131,11 +136,22 @@ impl UserCache {
         Some(entry)
     }
 
-    fn add_internal(&mut self, uuid: Uuid, name: String) -> UserCacheEntry {
+    fn add_internal(
+        &mut self,
+        uuid: Uuid,
+        name: String,
+        edition: Option<String>,
+    ) -> UserCacheEntry {
         let expiration_date = one_month_from_now();
+        let edition = edition.or_else(|| {
+            self.profiles_by_uuid
+                .get(&uuid)
+                .and_then(|entry| entry.edition.clone())
+        });
         let entry = UserCacheEntry {
             uuid,
             name,
+            edition,
             expiration_date,
             last_access: 0,
         };
@@ -204,9 +220,15 @@ impl UserCache {
                 continue;
             };
 
+            let edition = object
+                .get("edition")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+
             entries.push(UserCacheEntry {
                 uuid,
                 name: name.to_string(),
+                edition,
                 expiration_date,
                 last_access: 0,
             });

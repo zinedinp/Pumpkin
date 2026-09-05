@@ -685,7 +685,15 @@ impl Server {
                             .user_cache
                             .write()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        user_cache.upsert(player.gameprofile.id, player.gameprofile.name.clone());
+                        let edition = match player.client.as_ref() {
+                            ClientPlatform::Java(_) => Some("java"),
+                            ClientPlatform::Bedrock(_) => Some("bedrock"),
+                        };
+                        user_cache.upsert(
+                            player.gameprofile.id,
+                            player.gameprofile.name.clone(),
+                            edition,
+                        );
                     };
 
                     // TODO: Config if we want increase online

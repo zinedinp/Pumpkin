@@ -207,6 +207,16 @@ Item {
                     }
                     TableVRule {}
                     Text {
+                        text: qsTr("EDITION")
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
+                        font.bold: true
+                        Layout.preferredWidth: 78
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableCellPad
+                    }
+                    TableVRule {}
+                    Text {
                         text: qsTr("UUID")
                         color: Theme.accent
                         font.pixelSize: Theme.tableHeaderSize

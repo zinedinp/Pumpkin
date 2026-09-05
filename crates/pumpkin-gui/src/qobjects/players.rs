@@ -206,6 +206,10 @@ fn player_to_variant(player: &crate::PlayerRow) -> QVariant {
         QString::from("uuid"),
         QVariant::from(&QString::from(&player.uuid)),
     );
+    map.insert(
+        QString::from("edition"),
+        QVariant::from(&QString::from(&player.edition)),
+    );
     map.insert(QString::from("ping"), QVariant::from(&player.ping_ms));
     map.insert(
         QString::from("dimension"),

@@ -182,6 +182,11 @@ fn demo_players(elapsed: f64) -> Vec<PlayerRow> {
         |(index, (name, dimension, online, operator, banned, whitelisted))| PlayerRow {
             name: name.to_owned(),
             uuid: format!("00000000-0000-0000-0000-00000000000{index}"),
+            edition: if index % 2 == 0 {
+                "java".to_owned()
+            } else {
+                "bedrock".to_owned()
+            },
             ping_ms: if online {
                 20 + i32::try_from(index).unwrap_or(0) * 15
             } else {

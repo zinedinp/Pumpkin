@@ -166,7 +166,7 @@ async fn fetch_profile_by_name_helper(server: &Server, name: &str) -> Option<Gam
             .user_cache
             .write()
             .unwrap()
-            .upsert(uuid, resolved_name.clone());
+            .upsert(uuid, resolved_name.clone(), None);
         let auth_config_clone = server
             .advanced_config
             .networking
@@ -209,7 +209,7 @@ async fn fetch_profile_by_name_helper(server: &Server, name: &str) -> Option<Gam
             .user_cache
             .write()
             .unwrap()
-            .upsert(uuid, name.to_string());
+            .upsert(uuid, name.to_string(), None);
         return Some(profile);
     }
 
@@ -235,7 +235,7 @@ async fn fetch_profile_by_id_helper(server: &Server, id: Uuid) -> Option<GamePro
             .user_cache
             .write()
             .unwrap()
-            .upsert(profile.id, profile.name.clone());
+            .upsert(profile.id, profile.name.clone(), None);
         return Some(profile);
     }
 

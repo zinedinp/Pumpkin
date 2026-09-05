@@ -91,7 +91,7 @@ impl GameProfileResult {
                                 .user_cache
                                 .write()
                                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .upsert(uuid, resolved_name.clone());
+                                .upsert(uuid, resolved_name.clone(), None);
                             Ok(vec![Self::profile_from_uuid_name(uuid, resolved_name)])
                         }
                         _ => Err(Self::unknown_player_syntax_error()),
@@ -103,7 +103,7 @@ impl GameProfileResult {
                         .user_cache
                         .write()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .upsert(profile.id, profile.name.clone());
+                        .upsert(profile.id, profile.name.clone(), None);
                     Ok(vec![profile])
                 } else {
                     Err(Self::unknown_player_syntax_error())
