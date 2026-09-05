@@ -103,6 +103,9 @@ fn main() {
 /// Qt requires its event loop on the process's main thread, and macOS enforces it.
 #[cfg(feature = "gui")]
 fn run_with_gui(runtime: &tokio::runtime::Runtime, config: PumpkinConfig) {
+    // `colored` (behind `to_pretty_console()`) auto-disables ANSI codes when stdout isn't a tty
+    colored::control::set_override(true);
+
     let side = pumpkin::gui::side(&config.advanced.gui);
 
     let server_side = side.clone();
