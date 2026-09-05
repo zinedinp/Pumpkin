@@ -54,22 +54,30 @@ fn main() {
             "qml/ReasonDialog.qml",
         ]);
 
-    CxxQtBuilder::new_qml_module(module)
-        .files([
-            "src/qobjects/server_stats.rs",
-            "src/qobjects/players.rs",
-            "src/qobjects/dev_tools.rs",
-            "src/qobjects/console.rs",
-        ])
-        // Embedded rather than loaded from disk so the binary stays self-contained. The QML module
-        // supplies the `/qt/qml/org/pumpkin/gui` prefix.
-        .qrc_resources([
-            "qml/icons/op.svg",
-            "qml/icons/kick.svg",
-            "qml/icons/ban.svg",
-        ])
-        .qt_module("Svg")
-        .build();
+    // SAFETY: include paths or sources changes.
+    unsafe {
+        CxxQtBuilder::new_qml_module(module)
+            .files([
+                "src/qobjects/server_stats.rs",
+                "src/qobjects/players.rs",
+                "src/qobjects/dev_tools.rs",
+                "src/qobjects/console.rs",
+            ])
+            // Embedded rather than loaded from disk so the binary stays self-contained. The QML
+            // module supplies the `/qt/qml/org/pumpkin/gui` prefix.
+            .qrc_resources([
+                "qml/icons/op.svg",
+                "qml/icons/kick.svg",
+                "qml/icons/ban.svg",
+            ])
+            .qt_module("Svg")
+            // GCC 16 + Qt headers: QChar is incomplete in a SFINAE check inside libstdc++
+            // (`std::ranges::data`). Qt itself silences this (QTBUG-143470)
+            .cc_builder(|cc| {
+                cc.flag_if_supported("-Wno-sfinae-incomplete");
+            })
+            .build();
+    }
 }
 
 /// Fails with an actionable message instead of letting the C++ linker complain about Qt.
