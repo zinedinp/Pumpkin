@@ -22,7 +22,7 @@ RowLayout {
         visible: field.compact
         text: field.value
         color: Theme.fg
-        font.pixelSize: 12
+        font.pixelSize: Theme.tableCellSize
         font.family: field.mono ? "monospace" : "sans-serif"
         elide: Text.ElideMiddle
         verticalAlignment: Text.AlignVCenter

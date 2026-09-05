@@ -62,70 +62,94 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
+                Layout.fillHeight: false
                 Layout.bottomMargin: 6
-                spacing: 12
+                spacing: 0
 
                 Text {
                     text: qsTr("NAME")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
                     Layout.preferredWidth: 140
+                    Layout.leftMargin: Theme.tableEdge
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Text {
                     text: qsTr("DIMENSION")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
                     Layout.preferredWidth: 160
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Text {
                     text: qsTr("PLAYERS")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
-                    Layout.preferredWidth: 70
                     horizontalAlignment: Text.AlignRight
+                    Layout.preferredWidth: 70
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Text {
                     text: qsTr("LOADED CHUNKS")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
-                    Layout.preferredWidth: 110
                     horizontalAlignment: Text.AlignRight
+                    Layout.preferredWidth: 110
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Text {
                     text: qsTr("ENTITIES")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
-                    Layout.preferredWidth: 70
                     horizontalAlignment: Text.AlignRight
+                    Layout.preferredWidth: 70
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Text {
                     text: qsTr("TIME")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
                     Layout.preferredWidth: 50
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Text {
                     text: qsTr("WEATHER")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
                     Layout.preferredWidth: 80
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableCellPad
                 }
+                TableVRule {}
                 Item {
                     Layout.fillWidth: true
                 }
                 Text {
                     text: qsTr("SIZE")
-                    color: Theme.fgMuted
-                    font.pixelSize: 10
+                    color: Theme.accent
+                    font.pixelSize: Theme.tableHeaderSize
                     font.bold: true
                     horizontalAlignment: Text.AlignRight
+                    Layout.leftMargin: Theme.tableCellPad
+                    Layout.rightMargin: Theme.tableEdge
                 }
             }
 
@@ -165,68 +189,107 @@ Item {
 
                     RowLayout {
                         anchors.fill: parent
-                        spacing: 12
+                        spacing: 0
 
                         Text {
                             text: name
                             color: Theme.fg
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             elide: Text.ElideRight
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 140
+                            Layout.leftMargin: Theme.tableEdge
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Text {
                             text: dimension.replace("minecraft:", "")
                             color: Theme.fgMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             elide: Text.ElideRight
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 160
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Text {
                             text: players
                             color: Theme.fg
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             font.family: "monospace"
                             horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 70
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Text {
                             text: chunks
                             color: Theme.fg
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             font.family: "monospace"
                             horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 110
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Text {
                             text: entities
                             color: Theme.fg
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             font.family: "monospace"
                             horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 70
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Text {
                             text: Format.gameTime(timeOfDay)
                             color: Theme.fgMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             font.family: "monospace"
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 50
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Text {
                             text: page.weatherLabel(weather)
                             color: Theme.fgMuted
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
                             Layout.preferredWidth: 80
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableCellPad
                         }
+                        TableVRule {}
                         Item {
                             Layout.fillWidth: true
                         }
                         Text {
                             text: Format.bytes(size)
                             color: Theme.fg
-                            font.pixelSize: 12
+                            font.pixelSize: Theme.tableCellSize
                             font.family: "monospace"
                             horizontalAlignment: Text.AlignRight
+                            verticalAlignment: Text.AlignVCenter
+                            Layout.fillHeight: true
+                            Layout.leftMargin: Theme.tableCellPad
+                            Layout.rightMargin: Theme.tableEdge
                         }
                     }
 

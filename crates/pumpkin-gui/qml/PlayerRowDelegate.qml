@@ -31,9 +31,7 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
-        anchors.leftMargin: 0
-        anchors.rightMargin: 0
-        spacing: 12
+        spacing: 0
 
         CopyableText {
             compact: true
@@ -44,7 +42,11 @@ Rectangle {
             Layout.maximumWidth: 186
             Layout.fillWidth: false
             Layout.alignment: Qt.AlignVCenter
+            Layout.leftMargin: Theme.tableEdge
+            Layout.rightMargin: Theme.tableCellPad
         }
+
+        TableVRule {}
 
         CopyableText {
             compact: true
@@ -54,38 +56,66 @@ Rectangle {
             Layout.maximumWidth: 276
             Layout.fillWidth: false
             Layout.alignment: Qt.AlignVCenter
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableCellPad
         }
+
+        TableVRule {}
 
         Text {
             text: row.isOnline ? (row.ping + " ms") : "–"
             color: row.isOnline ? Theme.loadColor(row.ping / 300) : Theme.fgMuted
-            font.pixelSize: 12
+            font.pixelSize: Theme.tableCellSize
             font.family: "monospace"
             horizontalAlignment: Text.AlignRight
+            verticalAlignment: Text.AlignVCenter
+            Layout.fillHeight: true
             Layout.preferredWidth: 60
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableCellPad
         }
+
+        TableVRule {}
 
         Text {
             text: row.dimension === "" ? "–" : row.dimension.replace("minecraft:", "")
             color: Theme.fgMuted
-            font.pixelSize: 12
+            font.pixelSize: Theme.tableCellSize
             elide: Text.ElideRight
+            verticalAlignment: Text.AlignVCenter
+            Layout.fillHeight: true
             Layout.preferredWidth: 120
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableCellPad
         }
+
+        TableVRule {}
 
         Text {
             text: row.gamemode === "" ? "–" : row.gamemode
             color: Theme.fgMuted
-            font.pixelSize: 12
+            font.pixelSize: Theme.tableCellSize
+            verticalAlignment: Text.AlignVCenter
+            Layout.fillHeight: true
             Layout.preferredWidth: 80
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableCellPad
         }
+
+        TableVRule {}
 
         Text {
             text: row.isOnline ? Format.duration(row.online) : "–"
             color: Theme.fgMuted
-            font.pixelSize: 12
+            font.pixelSize: Theme.tableCellSize
+            verticalAlignment: Text.AlignVCenter
+            Layout.fillHeight: true
             Layout.preferredWidth: 70
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableCellPad
         }
+
+        TableVRule {}
 
         Item {
             Layout.fillWidth: true
@@ -93,6 +123,8 @@ Rectangle {
 
         RowLayout {
             spacing: 6
+            Layout.leftMargin: Theme.tableCellPad
+            Layout.rightMargin: Theme.tableEdge
 
             IconButton {
                 visible: row.view === "online" || row.view === "offline"

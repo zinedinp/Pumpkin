@@ -43,6 +43,12 @@ QtObject {
 
     readonly property int radius: 8
     readonly property int gap: 12
+    // Inset for the first and last table cells so labels are not aligned with the card edge.
+    readonly property int tableEdge: 12
+    // Horizontal padding on either side of a column
+    readonly property int tableCellPad: 8
+    readonly property int tableHeaderSize: 12
+    readonly property int tableCellSize: 13
     // Shared control height so the player search field and the whitelist row line up.
     readonly property int controlHeight: 32
 

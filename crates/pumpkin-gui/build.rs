@@ -51,6 +51,7 @@ fn main() {
             "qml/Worlds.qml",
             "qml/Players.qml",
             "qml/PlayerRowDelegate.qml",
+            "qml/TableVRule.qml",
             "qml/IconButton.qml",
             "qml/ReasonDialog.qml",
         ]);

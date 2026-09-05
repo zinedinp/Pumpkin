@@ -192,60 +192,81 @@ Item {
                 // Header row
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.fillHeight: false
                     Layout.bottomMargin: 6
-                    spacing: 12
+                    spacing: 0
 
                     Text {
                         text: qsTr("NAME")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
                         Layout.preferredWidth: 186
+                        Layout.leftMargin: Theme.tableEdge
+                        Layout.rightMargin: Theme.tableCellPad
                     }
+                    TableVRule {}
                     Text {
                         text: qsTr("UUID")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
                         Layout.preferredWidth: 276
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableCellPad
                     }
+                    TableVRule {}
                     Text {
                         text: qsTr("PING")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
-                        Layout.preferredWidth: 60
                         horizontalAlignment: Text.AlignRight
+                        Layout.preferredWidth: 60
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableCellPad
                     }
+                    TableVRule {}
                     Text {
                         text: qsTr("DIMENSION")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
                         Layout.preferredWidth: 120
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableCellPad
                     }
+                    TableVRule {}
                     Text {
                         text: qsTr("MODE")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
                         Layout.preferredWidth: 80
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableCellPad
                     }
+                    TableVRule {}
                     Text {
                         text: qsTr("ONLINE")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
                         Layout.preferredWidth: 70
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableCellPad
                     }
+                    TableVRule {}
                     Item {
                         Layout.fillWidth: true
                     }
                     Text {
                         text: qsTr("ACTIONS")
-                        color: Theme.fgMuted
-                        font.pixelSize: 10
+                        color: Theme.accent
+                        font.pixelSize: Theme.tableHeaderSize
                         font.bold: true
+                        Layout.leftMargin: Theme.tableCellPad
+                        Layout.rightMargin: Theme.tableEdge
                     }
                 }
 
