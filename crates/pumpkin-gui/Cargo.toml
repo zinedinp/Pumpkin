@@ -1,0 +1,20 @@
+[package]
+name = "pumpkin-gui"
+version.workspace = true
+description = "Optional Qt6 monitoring and console window for the Pumpkin server."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+arc-swap.workspace = true
+cxx.workspace = true
+cxx-qt.workspace = true
+cxx-qt-lib = { workspace = true, features = ["qt_gui", "qt_qml"] }
+sysinfo = { workspace = true, features = ["system", "disk", "component"] }
+
+[build-dependencies]
+cxx-qt-build.workspace = true
+
+[lints]
+workspace = true

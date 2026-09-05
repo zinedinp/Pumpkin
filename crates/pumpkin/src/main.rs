@@ -1,4 +1,7 @@
 #![deny(clippy::unwrap_used)]
+// Argument handling and fatal startup failures happen before the logger exists, so they have to
+// go straight to the terminal. Same reason `logging.rs` opts out.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 // Don't warn on event sending macros
 #![recursion_limit = "512"]
@@ -28,6 +31,17 @@ use pumpkin::{
     stop_or_exit_server,
 };
 use pumpkin::{PumpkinServer, stop_server};
+#[cfg(feature = "gui")]
+use pumpkin_gui::GuiSide;
+
+mod cli;
+
+/// The GUI handle, or a placeholder in builds without the feature, so `server_main` has one
+/// signature either way.
+#[cfg(feature = "gui")]
+type MaybeGui = Option<GuiSide>;
+#[cfg(not(feature = "gui"))]
+type MaybeGui = Option<std::convert::Infallible>;
 
 use pumpkin_config::{LoadConfiguration, PumpkinConfig};
 use pumpkin_util::text::{
@@ -41,13 +55,86 @@ const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
+fn main() {
+    let _ = MAIN_THREAD.set(thread::current().id());
+
+    let args = match cli::parse(std::env::args().skip(1)) {
+        cli::Action::Run(args) => args,
+        cli::Action::Exit { message, code } => {
+            if code == 0 {
+                println!("{message}");
+            } else {
+                eprintln!("{message}");
+            }
+            exit(code);
+        }
+    };
+
+    let exec_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config = PumpkinConfig::load(&exec_dir);
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!("Failed to start the async runtime: {err}");
+            exit(1);
+        }
+    };
+
+    #[cfg(feature = "gui")]
+    if args.gui {
+        run_with_gui(&runtime, config);
+        return;
+    }
+
+    let _ = &args;
+    runtime.block_on(server_main(config, None));
+    exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
+}
+
+/// Runs the server on a worker thread and Qt's event loop on the main thread.
+///
+/// Qt requires its event loop on the process's main thread, and macOS enforces it.
+#[cfg(feature = "gui")]
+fn run_with_gui(runtime: &tokio::runtime::Runtime, config: PumpkinConfig) {
+    let side = pumpkin::gui::side(&config.advanced.gui);
+
+    let server_side = side.clone();
+    let handle = runtime.handle().clone();
+    let server_thread = std::thread::Builder::new()
+        .name("Pumpkin-Server".into())
+        .spawn(move || handle.block_on(server_main(config, Some(server_side))));
+
+    let Ok(server_thread) = server_thread else {
+        eprintln!("Failed to spawn the server thread");
+        exit(1);
+    };
+
+    match pumpkin::gui::run(side) {
+        Ok(_) => {
+            // Closing the window shuts the server down; the process only ends once the world is
+            // saved.
+            stop_server();
+        }
+        Err(err) => {
+            warn!("Could not open the GUI ({err}); continuing without a window");
+        }
+    }
+
+    let _ = server_thread.join();
+    exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
+}
+
 // WARNING: All rayon calls from the tokio runtime must be non-blocking! This includes things
 // like `par_iter`. These should be spawned in the the rayon pool and then passed to the tokio
 // runtime with a channel! See `Level::fetch_chunks` as an example!
 #[allow(clippy::too_many_lines)]
-#[tokio::main]
-async fn main() {
-    let _ = MAIN_THREAD.set(thread::current().id());
+async fn server_main(config: PumpkinConfig, gui: MaybeGui) {
+    // Only read in `gui` builds; binding it keeps one signature for both.
+    let _ = &gui;
 
     // reqwest is built with `rustls-no-provider`, so pick the ring provider (the one
     // wasmtime-wasi-http/rtc already force) before any client can be constructed.
@@ -65,13 +152,16 @@ async fn main() {
     console_subscriber::init();
     let time = Instant::now();
 
-    let exec_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-
-    let config = PumpkinConfig::load(&exec_dir);
-
     let vanilla_data = VanillaData::load();
 
-    pumpkin::init_logger(&config.advanced);
+    #[cfg(feature = "gui")]
+    let extra_layer = gui
+        .as_ref()
+        .map(|side| pumpkin::gui::log_layer(side.logs.clone()));
+    #[cfg(not(feature = "gui"))]
+    let extra_layer = None;
+
+    pumpkin::init_logger_with(&config.advanced, extra_layer);
 
     info!(
         "{}",
@@ -120,7 +210,15 @@ async fn main() {
         }
     });
 
+    let gui_config = config.advanced.gui.clone();
     let pumpkin_server = PumpkinServer::new(config.basic, config.advanced, vanilla_data).await;
+
+    #[cfg(feature = "gui")]
+    if let Some(side) = gui.as_ref() {
+        pumpkin::gui::attach(&pumpkin_server.server, side, &gui_config);
+    }
+    let _ = &gui_config;
+
     let plugin_wait_time = pumpkin_server.init_plugins().await;
 
     let time_elapsed = time.elapsed().saturating_sub(plugin_wait_time);
@@ -178,8 +276,6 @@ async fn main() {
             .color_named(NamedColor::Red)
             .to_pretty_console()
     );
-
-    exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
 }
 fn print_support_links_and_warning() {
     warn!(

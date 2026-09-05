@@ -7,6 +7,29 @@ members = [
     "crates/pumpkin-config",
     "crates/pumpkin-data",
     "crates/pumpkin-gametest",
+    "crates/pumpkin-gui",
+    "crates/pumpkin-inventory",
+    "crates/pumpkin-macros",
+    "crates/pumpkin-nbt",
+    "crates/pumpkin-plugin-api",
+    "crates/pumpkin-plugin-runtime",
+    "crates/pumpkin-plugin-utils",
+    "crates/pumpkin-protocol",
+    "crates/pumpkin-util",
+    "crates/pumpkin-world",
+    "tools/pumpkin-codegen",
+    "tools/pumpkin-fuzzer",
+]
+
+# `pumpkin-gui` is deliberately not a default: it links against Qt6,a machine without Qt
+#  installed wouldnt build. Build it with `-p pumpkin-gui` or --features gui.
+default-members = [
+    "crates/pumpkin",
+    "crates/pumpkin-api-macros",
+    "crates/pumpkin-codecs",
+    "crates/pumpkin-config",
+    "crates/pumpkin-data",
+    "crates/pumpkin-gametest",
     "crates/pumpkin-inventory",
     "crates/pumpkin-macros",
     "crates/pumpkin-nbt",
@@ -156,6 +179,10 @@ colored = { version = "3.1", default-features = false }
 console-subscriber = { version = "0.5.0", default-features = false }
 crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
 criterion = { version = "0.8", default-features = false }
+cxx = { version = "1.0", default-features = false, features = ["std"] }
+cxx-qt = { version = "0.10", default-features = false }
+cxx-qt-build = { version = "0.10", default-features = false }
+cxx-qt-lib = { version = "0.10", default-features = false }
 crypto-bigint = { version = "0.7.5", default-features = false }
 dashmap = { version = "6.2", default-features = false }
 ecdsa = { version = "0.17.0", default-features = false, features = ["std"] }

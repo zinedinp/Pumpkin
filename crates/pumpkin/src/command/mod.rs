@@ -97,11 +97,27 @@ impl fmt::Display for CommandSender {
     }
 }
 
+/// Receives everything the console prints, in addition to stdout.
+pub type ConsoleSink = Box<dyn Fn(&str) + Send + Sync>;
+
+static CONSOLE_SINK: std::sync::OnceLock<ConsoleSink> = std::sync::OnceLock::new();
+
+/// Installs the console output sink.
+pub fn set_console_sink(sink: ConsoleSink) {
+    let _ = CONSOLE_SINK.set(sink);
+}
+
 impl CommandSender {
     pub fn send_message(&self, text: TextComponent) {
         match self {
             #[allow(clippy::print_stdout)]
-            Self::Console => println!("{}", text.to_pretty_console()),
+            Self::Console => {
+                let line = text.to_pretty_console();
+                if let Some(sink) = CONSOLE_SINK.get() {
+                    sink(&line);
+                }
+                println!("{line}");
+            }
             Self::Player(c) => c.send_system_message(&text),
             Self::Rcon(s) => s
                 .lock()

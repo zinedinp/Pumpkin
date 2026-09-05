@@ -442,6 +442,60 @@ impl Hinter for PumpkinCommandCompleter {
 
 impl Validator for PumpkinCommandCompleter {}
 
+/// Tab-completion candidates for a console command, and where in `line` they replace from.
+///
+/// Shared by the rustyline completer and the GUI console so both offer identical suggestions.
+pub fn console_completion_at(server: &Arc<Server>, line: &str, pos: usize) -> (usize, Vec<String>) {
+    let pos = pos.min(line.len());
+    let cmd_to_cursor = &line[..pos];
+    let has_slash = cmd_to_cursor.starts_with('/');
+    let cmd = if has_slash {
+        &cmd_to_cursor[1..]
+    } else {
+        cmd_to_cursor
+    };
+
+    let dispatcher = server.command_dispatcher.load();
+    let source = CommandSender::Console.into_source(server);
+
+    if cmd.trim().is_empty() {
+        // Nothing typed yet: offer every command.
+        let suggestions: Vec<String> = dispatcher
+            .get_all_commands()
+            .keys()
+            .map(ToString::to_string)
+            .collect();
+        return (pos, suggestions);
+    }
+
+    if let Some(cursor) = pos.checked_sub(usize::from(has_slash)) {
+        let mut reader = StringReader::new(cmd);
+        if reader.peek() == Some('/') {
+            reader.skip();
+        }
+        let parsed = dispatcher.parse(&mut reader, &source);
+        let suggestions = dispatcher.get_completion_suggestions(parsed, cursor);
+
+        if !suggestions.is_empty() {
+            let start = suggestions.range.start;
+            let suggestions = suggestions
+                .suggestions
+                .into_iter()
+                .map(|s| s.text.cached_text().clone())
+                .collect();
+            return (start + usize::from(has_slash), suggestions);
+        }
+    }
+
+    (0, Vec::new())
+}
+
+/// Completion candidates only, for callers that replace the word themselves.
+#[must_use]
+pub fn console_completions(server: &Arc<Server>, line: &str, pos: usize) -> Vec<String> {
+    console_completion_at(server, line, pos).1
+}
+
 impl Completer for PumpkinCommandCompleter {
     type Candidate = String;
 
@@ -451,14 +505,6 @@ impl Completer for PumpkinCommandCompleter {
         pos: usize,
         _ctx: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        let cmd_to_cursor = &line[..pos];
-        let has_slash = cmd_to_cursor.starts_with('/');
-        let cmd = if has_slash {
-            &cmd_to_cursor[1..]
-        } else {
-            cmd_to_cursor
-        };
-
         let Ok(server_guard) = self.server.try_read() else {
             return Ok((0, Vec::new()));
         };
@@ -466,44 +512,6 @@ impl Completer for PumpkinCommandCompleter {
             return Ok((0, Vec::new()));
         };
 
-        let dispatcher = server.command_dispatcher.load();
-        let source = CommandSender::Console.into_source(server);
-
-        // Temporary setups to unify both dispatchers for now:
-
-        {
-            if cmd.trim().is_empty() {
-                // Give all commands as suggestions.
-
-                let suggestions: Vec<String> = dispatcher
-                    .get_all_commands()
-                    .keys()
-                    .map(ToString::to_string)
-                    .collect();
-                return Ok((pos, suggestions));
-            }
-        }
-
-        // Not sure if this is necessary, but I guess we better be safe than sorry.
-        if let Some(cursor) = pos.checked_sub(usize::from(has_slash)) {
-            let mut reader = StringReader::new(cmd);
-            if reader.peek() == Some('/') {
-                reader.skip();
-            }
-            let parsed = dispatcher.parse(&mut reader, &source);
-            let suggestions = dispatcher.get_completion_suggestions(parsed, cursor);
-
-            if !suggestions.is_empty() {
-                let start = suggestions.range.start;
-                let suggestions = suggestions
-                    .suggestions
-                    .into_iter()
-                    .map(|s| s.text.cached_text().clone())
-                    .collect();
-                return Ok((start + usize::from(has_slash), suggestions));
-            }
-        }
-
-        Ok((0, Vec::new()))
+        Ok(console_completion_at(server, line, pos))
     }
 }

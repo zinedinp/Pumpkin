@@ -109,6 +109,7 @@ rustc_version_runtime.workspace = true
 
 flate2.workspace = true
 console-subscriber = { workspace = true, optional = true }
+pumpkin-gui = { path = "../pumpkin-gui", optional = true }
 
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
@@ -133,6 +134,8 @@ tempfile.workspace = true
 
 [features]
 console-subscriber = ["dep:console-subscriber"]
+# Opt-in: links against Qt6, which would otherwise be required to start the server at all.
+gui = ["dep:pumpkin-gui"]
 
 [lints]
 workspace = true

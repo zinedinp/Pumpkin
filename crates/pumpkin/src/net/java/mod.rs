@@ -547,7 +547,10 @@ impl JavaClient {
             },
             packet_result = network_reader.get_raw_packet() => {
                 match packet_result {
-                    Ok(packet) => Some(packet),
+                    Ok(packet) => {
+                        crate::metrics::record_bytes_in(packet.payload.len() as u64);
+                        Some(packet)
+                    }
                     Err(err) => {
                         if !matches!(err, PacketDecodeError::ConnectionClosed) {
                             debug!("Failed to decode packet from client {}: {}", self.id, err);
@@ -778,6 +781,7 @@ impl JavaClient {
                         break;
                     }
 
+                    crate::metrics::record_bytes_out(frame.len() as u64);
                     if let Err(err) = writer.write_frame(&frame).await {
                         if !close_token.is_cancelled() {
                             warn!("Failed to send packet batch to client {id}: {err}");

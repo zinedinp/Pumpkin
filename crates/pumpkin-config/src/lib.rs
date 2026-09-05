@@ -17,6 +17,8 @@ use tracing::{debug, error, warn};
 
 /// Fun and experimental configuration options.
 pub mod fun;
+/// Configuration for the optional Qt6 monitoring window.
+pub mod gui;
 /// Server logging configuration options.
 pub mod logging;
 /// Networking and protocol configuration options.
@@ -31,6 +33,7 @@ pub mod resource_pack;
 
 pub use chat::{AntiSpamConfig, ChatConfig};
 pub use commands::{CommandOverride, CommandsConfig};
+pub use gui::GuiConfig;
 pub use networking::auth::AuthenticationConfig;
 pub use networking::bedrock::BedrockConfig;
 pub use networking::compression::CompressionConfig;
@@ -166,6 +169,8 @@ pub struct AdvancedConfiguration {
     pub plugins: PluginsConfig,
     /// Advancement configuration
     pub advancement: AdvancementConfig,
+    /// Settings for the optional Qt6 monitoring window (`--gui`).
+    pub gui: GuiConfig,
 }
 
 /// Basic configuration for core server settings.

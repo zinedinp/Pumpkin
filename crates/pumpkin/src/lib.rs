@@ -45,6 +45,7 @@ use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::{debug, error, info, warn};
+use tracing_subscriber::Layer;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -56,8 +57,11 @@ pub mod data;
 pub mod enchantment;
 pub mod entity;
 pub mod error;
+#[cfg(feature = "gui")]
+pub mod gui;
 pub mod item;
 pub mod logging;
+pub mod metrics;
 pub mod net;
 pub mod plugin;
 pub mod server;
@@ -75,8 +79,19 @@ pub type LoggerOption = Option<(ReadlineLogWrapper, LevelFilter, LoggingConfig)>
 pub static LOGGER_IMPL: LazyLock<Arc<OnceLock<LoggerOption>>> =
     LazyLock::new(|| Arc::new(OnceLock::new()));
 
-#[expect(clippy::print_stderr, clippy::too_many_lines)]
+/// A layer added alongside the built-in ones, used by the GUI to tap log lines.
+pub type ExtraLayer = Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync>;
+
 pub fn init_logger(advanced_config: &AdvancedConfiguration) {
+    init_logger_with(advanced_config, None);
+}
+
+/// Like [`init_logger`], but installs an additional subscriber layer.
+///
+/// The extra layer is attached first, directly onto the `Registry`, so its type parameter stays
+/// `Registry` rather than growing with every layer stacked after it.
+#[expect(clippy::print_stderr, clippy::too_many_lines)]
+pub fn init_logger_with(advanced_config: &AdvancedConfiguration, extra: Option<ExtraLayer>) {
     use tracing_subscriber::EnvFilter;
     use tracing_subscriber::fmt;
 
@@ -168,6 +183,7 @@ pub fn init_logger(advanced_config: &AdvancedConfiguration) {
             let fmt_layer =
                 fmt_layer.with_timer(fmt::time::OffsetTime::new(local_offset, timer_format));
             let registry = tracing_subscriber::registry()
+                .with(extra)
                 .with(env_filter)
                 .with(fmt_layer);
             if let Some(file_logger) = file_logger {
@@ -178,6 +194,7 @@ pub fn init_logger(advanced_config: &AdvancedConfiguration) {
         } else {
             let fmt_layer = fmt_layer.without_time();
             let registry = tracing_subscriber::registry()
+                .with(extra)
                 .with(env_filter)
                 .with(fmt_layer);
             if let Some(file_logger) = file_logger {
