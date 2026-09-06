@@ -11,8 +11,6 @@ compile_error!("Compiling for WASI targets is not supported!");
 
 use pumpkin_data::packet::CURRENT_MC_VERSION;
 use pumpkin_world::{CURRENT_BEDROCK_MC_PROTOCOL, CURRENT_BEDROCK_MC_VERSION};
-#[cfg(feature = "gui")]
-use std::io::IsTerminal;
 use std::{
     backtrace::{Backtrace, BacktraceStatus},
     io::{self},
@@ -57,7 +55,7 @@ static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 fn main() {
     let _ = MAIN_THREAD.set(thread::current().id());
 
-    let args = match cli::parse(std::env::args().skip(1)) {
+    let args = match cli::parse(std::env::args().skip(1), cli::Environment::detect()) {
         cli::Action::Run(args) => args,
         cli::Action::Exit { message, code } => {
             if code == 0 {
@@ -83,9 +81,10 @@ fn main() {
         }
     };
 
-    // if the launcher isn't a tty, it is treated the same as `--gui`; `--nogui` overrides both
+    // PUMPKIN_GUI_ENDPOINT or a non-tty launcher selects
+    // IPC mode. `--nogui` overrides both. `cli::parse` owns the decision.
     #[cfg(feature = "gui")]
-    if !args.nogui && (args.gui || !io::stdin().is_terminal()) {
+    if args.ipc {
         // `colored` (behind `to_pretty_console()`) auto-disables ANSI codes when stdout isn't a
         // tty
         colored::control::set_override(true);

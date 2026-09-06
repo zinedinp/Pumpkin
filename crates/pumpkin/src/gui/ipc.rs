@@ -44,8 +44,6 @@ pub fn spawn_listener(
     server: Arc<Server>,
     config: &GuiConfig,
 ) -> std::io::Result<(String, Broadcaster)> {
-    ATTACHED.store(true, Ordering::Release);
-
     let (tx, _rx) = broadcast::channel(64);
     let _ = BROADCAST.set(tx.clone());
     let theme = ThemePreference::from_config(&config.theme);
@@ -53,6 +51,9 @@ pub fn spawn_listener(
     // Set when `pumpkin-gui` spawned this process itself -> otherwise pick a fresh endpoint.
     let requested = std::env::var(pumpkin_gui_api::GUI_ENDPOINT_ENV).ok();
     let endpoint = bind_and_serve(server, tx.clone(), theme, requested)?;
+    // Only after a successful bind, a failed one must fall back to the console, not strand the
+    // server with neither a listener nor a console reader.
+    ATTACHED.store(true, Ordering::Release);
     Ok((endpoint, tx))
 }
 

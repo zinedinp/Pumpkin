@@ -169,7 +169,7 @@ pub struct AdvancedConfiguration {
     pub plugins: PluginsConfig,
     /// Advancement configuration
     pub advancement: AdvancementConfig,
-    /// Settings for the optional Qt6 monitoring window (`--gui`).
+    /// Settings for the optional pumpkin-gui monitoring window (`gui` feature).
     pub gui: GuiConfig,
 }
 

@@ -5,6 +5,7 @@ mod endpoint;
 mod model;
 mod protocol;
 mod system;
+mod version;
 
 pub use endpoint::unique_endpoint;
 pub use model::{
@@ -15,3 +16,6 @@ pub use protocol::{
     read_message, write_message,
 };
 pub use system::{DiskSpace, SystemSampler, SystemStats, directory_size};
+pub use version::{
+    GUI_VERSION_MARKER, VERSION_PREFIX, is_gui_capable_version_line, is_pumpkin_version_line,
+};

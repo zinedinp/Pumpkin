@@ -135,7 +135,7 @@ tempfile.workspace = true
 
 [features]
 console-subscriber = ["dep:console-subscriber"]
-# Enables the local IPC listener and auto-spawn of the separate `pumpkin-gui` binary.
+# Enables the local IPC listener and log ring a separate gui binary reads from.
 gui = []
 
 [lints]
