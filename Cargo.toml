@@ -22,7 +22,7 @@ members = [
 ]
 
 # `pumpkin-gui` lives in its own repository (github.com/zinedinp/pumpkin-gui) and is pulled in
-# as a plain path/git dependency behind the "gui" feature, not a workspace member
+# as a git dependency behind the "gui" feature, not a workspace member
 default-members = [
     "crates/pumpkin",
     "crates/pumpkin-api-macros",
@@ -265,3 +265,9 @@ wasm-encoder = { version = "0.258", default-features = false, features = ["compo
 webpki-root-certs = { version = "1.0.8", default-features = false }
 # ring-only: must match the provider the rest of the tree (wasmtime-wasi-http, rtc) uses
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+# `pumpkin-gui` (fetched via git, see crates/pumpkin/Cargo.toml) depends on `pumpkin-gui-api`
+# via a git dependency on this same repo. Patch that reference onto the in-tree crate so both
+# paths resolve to one type instead of two distinct copies of `pumpkin-gui-api`.
+[patch."https://github.com/zinedinp/Pumpkin"]
+pumpkin-gui-api = { path = "crates/pumpkin-gui-api" }
