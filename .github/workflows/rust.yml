@@ -55,6 +55,10 @@ jobs:
           submodules: recursive
       - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
       - run: rustup component add clippy
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-declarative-dev libqt6svg6-dev libwayland-dev
       - uses: Swatinem/rust-cache@v2
       - name: Clippy (debug)
         run: cargo clippy --all-targets --all-features
@@ -71,6 +75,10 @@ jobs:
           submodules: recursive
       - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
       - run: rustup component add clippy
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-declarative-dev libqt6svg6-dev libwayland-dev
       - uses: Swatinem/rust-cache@v2
       - name: Clippy (release)
         run: cargo clippy --release --all-targets --all-features
