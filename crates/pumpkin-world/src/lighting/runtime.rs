@@ -242,12 +242,19 @@ impl DynamicLightEngine {
     }
 
     /// Re-derives the light at every position queued since the last drain, each one once.
-    fn check_pending_nodes(&self, cursor: &mut ChunkCursor) {
+    /// Budgeted like the flood passes. A bulk edit or sky refill can queue far more than
+    /// one tick should re-derive in a single `World::tick`, so the rest carries over as
+    /// leftover rather than being drained unconditionally.
+    fn check_pending_nodes(&self, cursor: &mut ChunkCursor, budget: &mut i32) {
         let mut seen = FxHashSet::default();
-        while let Some(pos) = self.nodes_to_check.pop() {
+        while *budget > 0 {
+            let Some(pos) = self.nodes_to_check.pop() else {
+                break;
+            };
             if !seen.insert(pos) {
                 continue;
             }
+            *budget -= 1;
             // Block light needs its luminance, sky light its opacity, and nothing in between
             // changes the block. Fullbright and dark never look at it -> skip the fetch.
             let state = match cursor.level.lighting_config {
@@ -279,7 +286,7 @@ impl DynamicLightEngine {
             // shared counters before they are snapshotted below.
             let tally = LocalCounters::new(&self.counters);
             let mut cursor = ChunkCursor::new(level, &tally);
-            self.check_pending_nodes(&mut cursor);
+            self.check_pending_nodes(&mut cursor, &mut budget);
             updates += self.perform_block_light_updates(&mut cursor, &mut budget);
             updates += self.perform_sky_light_updates(&mut cursor, &mut budget);
         }
