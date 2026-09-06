@@ -85,7 +85,7 @@ fn apply_sgr(style: &mut Style, raw: &str) {
             29 => style.strike = false,
             39 => style.fg = None,
             // Truecolour (`38;2;r;g;b`); 256-colour (`38;5;n`) is not produced by `colored` or
-            // `to_pretty_console`, so it is deliberately left unhandled rather than mis-rendered.
+            // `to_pretty_console`, so it is deliberately left unhandled rather than miss-rendered.
             38 if params.get(i + 1) == Some(&2) && i + 4 < params.len() => {
                 let clamp = |v: i64| -> u8 { u8::try_from(v.clamp(0, 255)).unwrap_or(0) };
                 style.fg = Some((
