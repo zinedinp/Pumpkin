@@ -85,10 +85,6 @@ pub trait RedstoneGateBlock<T: Send + Sync + BlockProperties + RedstoneGateBlock
         // neighbour with source `this` (the diode, not the block that poked).
         args.world
             .break_block(args.position, None, BlockFlags::NOTIFY_ALL);
-        for dir in BlockDirection::all() {
-            args.world
-                .update_neighbor(&args.position.offset(dir.to_offset()), args.block);
-        }
     }
 
     fn update_powered(&self, world: &World, pos: BlockPos, state: &BlockState, block: &Block);
