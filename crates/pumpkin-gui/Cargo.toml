@@ -19,3 +19,8 @@ cxx-qt-build.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.cargo-machete]
+# `cxx` is required by `#[cxx_qt::bridge]`'s macro expansion (the `include!`/`extern "C++"`
+# glue), even though nothing here references `cxx::` directly.
+ignored = ["cxx"]
