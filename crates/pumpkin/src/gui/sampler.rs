@@ -245,7 +245,11 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
         };
         row.online = true;
         row.ping_ms = i32::try_from(player.ping.load(Ordering::Relaxed)).unwrap_or(i32::MAX);
-        row.dimension = player.world().dimension.minecraft_name.to_owned();
+        player
+            .world()
+            .dimension
+            .minecraft_name
+            .clone_into(&mut row.dimension);
         row.gamemode = format!("{:?}", player.gamemode.load()).to_lowercase();
         row.online_secs = player.joined_at.elapsed().as_secs();
         row.operator |= player.permission_lvl.load() != PermissionLvl::Zero;
@@ -293,12 +297,12 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
                 .entry(uuid)
                 .or_insert_with(|| blank_player(uuid, name.to_owned()));
             if row.name.is_empty() {
-                row.name = name.to_owned();
+                name.clone_into(&mut row.name);
             }
-            if row.edition.is_empty() {
-                if let Some(edition) = edition {
-                    row.edition = edition.to_owned();
-                }
+            if row.edition.is_empty()
+                && let Some(edition) = edition
+            {
+                edition.clone_into(&mut row.edition);
             }
         }
     }
