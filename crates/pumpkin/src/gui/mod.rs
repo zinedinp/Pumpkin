@@ -34,8 +34,6 @@ pub fn attach(
     ring: &Arc<LogRing>,
     config: &GuiConfig,
 ) -> std::io::Result<String> {
-    let (endpoint, broadcaster) = ipc::spawn_listener(server.clone(), config)?;
-
     // Console command replies go through `println!`, not `tracing`, so the log layer cannot see
     // them. `text.to_pretty_console()` (e.g. `/tps`, join/leave messages) carries real ANSI
     // colours and OSC 8 hyperlinks, same as it does in the terminal.
@@ -44,6 +42,7 @@ pub fn attach(
         logs.push(LogLevel::Info, "console".to_owned(), line);
     }));
 
+    let (endpoint, broadcaster) = ipc::spawn_listener(server.clone(), ring.clone(), config)?;
     sampler::spawn(server, ring, &broadcaster, config);
     Ok(endpoint)
 }

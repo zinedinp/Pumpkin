@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use pumpkin_config::gui::GuiConfig;
-use pumpkin_gui_api::{GuiMessage, ServerMessage, ThemePreference, read_message, write_message};
+use pumpkin_gui_api::{
+    GuiMessage, LogRing, ServerMessage, ThemePreference, read_message, write_message,
+};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 
@@ -42,6 +44,7 @@ pub fn notify_shutdown() {
 /// string to hand to a spawned `pumpkin-gui` process (or to print for a manual `--attach`).
 pub fn spawn_listener(
     server: Arc<Server>,
+    ring: Arc<LogRing>,
     config: &GuiConfig,
 ) -> std::io::Result<(String, Broadcaster)> {
     let (tx, _rx) = broadcast::channel(64);
@@ -50,7 +53,7 @@ pub fn spawn_listener(
 
     // Set when `pumpkin-gui` spawned this process itself -> otherwise pick a fresh endpoint.
     let requested = std::env::var(pumpkin_gui_api::GUI_ENDPOINT_ENV).ok();
-    let endpoint = bind_and_serve(server, tx.clone(), theme, requested)?;
+    let endpoint = bind_and_serve(server, ring, tx.clone(), theme, requested)?;
     // Only after a successful bind, a failed one must fall back to the console, not strand the
     // server with neither a listener nor a console reader.
     ATTACHED.store(true, Ordering::Release);
@@ -60,6 +63,7 @@ pub fn spawn_listener(
 #[cfg(unix)]
 fn bind_and_serve(
     server: Arc<Server>,
+    ring: Arc<LogRing>,
     tx: Broadcaster,
     theme: ThemePreference,
     requested: Option<String>,
@@ -79,6 +83,7 @@ fn bind_and_serve(
             let rx = tx.subscribe();
             server.clone().spawn_task(handle_connection(
                 server.clone(),
+                ring.clone(),
                 read_half,
                 write_half,
                 rx,
@@ -95,6 +100,7 @@ fn bind_and_serve(
 #[cfg(windows)]
 fn bind_and_serve(
     server: Arc<Server>,
+    ring: Arc<LogRing>,
     tx: Broadcaster,
     theme: ThemePreference,
     requested: Option<String>,
@@ -123,6 +129,7 @@ fn bind_and_serve(
             let rx = tx.subscribe();
             server.clone().spawn_task(handle_connection(
                 server.clone(),
+                ring.clone(),
                 read_half,
                 write_half,
                 rx,
@@ -137,6 +144,7 @@ fn bind_and_serve(
 
 async fn handle_connection<R, W>(
     server: Arc<Server>,
+    ring: Arc<LogRing>,
     mut read_half: R,
     write_half: W,
     broadcast_rx: broadcast::Receiver<ServerMessage>,
@@ -148,12 +156,21 @@ async fn handle_connection<R, W>(
 {
     let (out_tx, out_rx) = mpsc::unbounded_channel::<ServerMessage>();
 
+    // Queued before the forwarder can push anything
+    let _ = out_tx.send(ServerMessage::Hello { meta, theme });
+
+    // The broadcast only reaches GUIs that were already subscribed, and `send` drops the message
+    // outright when there are none, so every line logged before this connection existed.
+    let mut backlog = Vec::new();
+    let from_seq = ring.drain_since(0, &mut backlog);
+    if !backlog.is_empty() {
+        let _ = out_tx.send(ServerMessage::LogLines(backlog));
+    }
+
     server.clone().spawn_task(writer_loop(write_half, out_rx));
     server
         .clone()
-        .spawn_task(forward_loop(broadcast_rx, out_tx.clone()));
-
-    let _ = out_tx.send(ServerMessage::Hello { meta, theme });
+        .spawn_task(forward_loop(broadcast_rx, out_tx.clone(), from_seq));
 
     loop {
         match read_message::<_, GuiMessage>(&mut read_half).await {
@@ -179,12 +196,24 @@ async fn writer_loop<W: AsyncWrite + Unpin>(
     }
 }
 
+/// `from_seq` is where the replayed backlog ended. The receiver was subscribed before that
+/// replay ran, so it still holds those same lines.
 async fn forward_loop(
     mut rx: broadcast::Receiver<ServerMessage>,
     tx: mpsc::UnboundedSender<ServerMessage>,
+    from_seq: u64,
 ) {
     loop {
         match rx.recv().await {
+            Ok(ServerMessage::LogLines(lines)) => {
+                let lines: Vec<_> = lines
+                    .into_iter()
+                    .filter(|line| line.seq >= from_seq)
+                    .collect();
+                if !lines.is_empty() && tx.send(ServerMessage::LogLines(lines)).is_err() {
+                    break;
+                }
+            }
             Ok(msg) => {
                 if tx.send(msg).is_err() {
                     break;
