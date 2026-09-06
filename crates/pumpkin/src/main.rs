@@ -183,7 +183,13 @@ async fn server_main(config: PumpkinConfig, gui: MaybeGui) {
     });
 
     let gui_config = config.advanced.gui.clone();
-    let pumpkin_server = PumpkinServer::new(config.basic, config.advanced, vanilla_data).await;
+    let pumpkin_server = PumpkinServer::new(
+        config.basic,
+        config.advanced,
+        config.telemetry,
+        vanilla_data,
+    )
+    .await;
 
     #[cfg(feature = "gui")]
     if let Some(ring) = gui_log_ring.as_ref() {

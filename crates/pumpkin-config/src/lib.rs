@@ -44,6 +44,10 @@ pub use networking::rcon::RCONConfig;
 pub use plugins::{PluginOverride, PluginsConfig};
 pub use pvp::PVPConfig;
 pub use server_links::ServerLinksConfig;
+pub use telemetry::TelemetryConfig;
+
+/// Telemetry configuration options.
+pub mod telemetry;
 
 mod commands;
 
@@ -80,6 +84,9 @@ pub struct PumpkinConfig {
     /// Advanced and feature-specific configuration settings.
     #[serde(flatten)]
     pub advanced: AdvancedConfiguration,
+    /// Anonymous telemetry configuration settings.
+    #[serde(default)]
+    pub telemetry: TelemetryConfig,
 }
 
 impl LoadConfiguration for PumpkinConfig {
@@ -90,6 +97,7 @@ impl LoadConfiguration for PumpkinConfig {
     fn validate(&self) {
         self.basic.validate();
         self.advanced.validate();
+        self.telemetry.validate();
 
         let min_vd = NonZero::<u8>::MIN;
         let Some(max_vd) = NonZero::new(64) else {
