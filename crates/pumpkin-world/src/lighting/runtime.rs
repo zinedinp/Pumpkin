@@ -736,7 +736,7 @@ impl DynamicLightEngine {
             self.queue_sky_light_increase(pos, expected_light);
         }
 
-        if expected_light >= current_light && expected_light > 0 {
+        if expected_light == current_light && expected_light > 0 {
             self.queue_sky_light_increase(pos, expected_light);
         }
     }
