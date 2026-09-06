@@ -1,12 +1,12 @@
 //! The data contract between the server and the GUI.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Mutex;
 
-use arc_swap::ArcSwap;
+use serde::{Deserialize, Serialize};
 
 /// Which theme the window starts in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThemePreference {
     #[default]
     System,
@@ -26,7 +26,7 @@ impl ThemePreference {
 }
 
 /// Severity of a captured log line, mirroring `tracing::Level` without depending on it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -50,7 +50,7 @@ impl LogLevel {
 }
 
 /// One line in the console view.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LogLine {
     /// Monotonically increasing; the GUI remembers the last one it rendered.
     pub seq: u64,
@@ -136,7 +136,7 @@ impl LogRing {
 }
 
 /// One row of the player table.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerRow {
     pub name: String,
     pub uuid: String,
@@ -153,7 +153,7 @@ pub struct PlayerRow {
 }
 
 /// One row of the world table.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldRow {
     pub name: String,
     pub dimension: String,
@@ -167,7 +167,7 @@ pub struct WorldRow {
 }
 
 /// static Values.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ServerMeta {
     pub pumpkin_version: String,
     pub commit: String,
@@ -184,7 +184,10 @@ pub struct ServerMeta {
 }
 
 /// Everything the dashboard renders, sampled as one consistent set.
-#[derive(Clone, Debug, Default)]
+///
+/// Static [`ServerMeta`] is deliberately not included here: it never changes after startup, so it
+/// is sent once via [`crate::protocol::ServerMessage::Hello`] instead of on every tick.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Snapshot {
     /// False until the server has finished starting up.
     pub server_ready: bool,
@@ -216,47 +219,4 @@ pub struct Snapshot {
     pub net_out_bps: u64,
 
     pub uptime_secs: u64,
-    pub meta: Arc<ServerMeta>,
-}
-
-/// Actions the GUI can trigger on the server.
-///
-/// Implemented on the `pumpkin` side; the GUI only holds a `dyn` reference.
-pub trait GuiCommands: Send + Sync {
-    /// Runs a console command, exactly as if it had been typed in the terminal.
-    fn submit(&self, line: String);
-
-    /// Tab-completion candidates for `line` at `cursor`.
-    fn completions(&self, line: &str, cursor: usize) -> Vec<String>;
-
-    /// Begins a graceful shutdown.
-    fn request_stop(&self);
-}
-
-/// The handle the GUI is started with.
-#[derive(Clone)]
-pub struct GuiSide {
-    pub snapshot: Arc<ArcSwap<Snapshot>>,
-    pub logs: Arc<LogRing>,
-    /// Set once the server exists; the GUI shows a disabled console until then.
-    pub commands: Arc<OnceLock<Arc<dyn GuiCommands>>>,
-    pub theme: ThemePreference,
-}
-
-impl GuiSide {
-    #[must_use]
-    pub fn new(theme: ThemePreference, log_buffer_lines: usize) -> Self {
-        Self {
-            snapshot: Arc::new(ArcSwap::from_pointee(Snapshot::default())),
-            logs: Arc::new(LogRing::new(log_buffer_lines)),
-            commands: Arc::new(OnceLock::new()),
-            theme,
-        }
-    }
-
-    /// The command sink, or `None` while the server is still starting.
-    #[must_use]
-    pub fn commands(&self) -> Option<&Arc<dyn GuiCommands>> {
-        self.commands.get()
-    }
 }

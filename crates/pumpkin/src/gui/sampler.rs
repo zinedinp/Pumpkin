@@ -10,8 +10,11 @@ use uuid::Uuid;
 
 use arc_swap::ArcSwap;
 use pumpkin_config::gui::GuiConfig;
-use pumpkin_gui_api::{GuiSide, PlayerRow, ServerMeta, Snapshot, SystemSampler, WorldRow};
+use pumpkin_gui_api::{
+    LogRing, PlayerRow, ServerMessage, ServerMeta, Snapshot, SystemSampler, WorldRow,
+};
 
+use super::ipc::Broadcaster;
 use crate::net::ClientPlatform;
 use crate::server::Server;
 use crate::{SHOULD_STOP, STOP_INTERRUPT};
@@ -42,21 +45,23 @@ struct DiskUsage {
     total: u64,
 }
 
-pub fn spawn(server: &Arc<Server>, side: &GuiSide, config: &GuiConfig) {
+pub fn spawn(server: &Arc<Server>, ring: &Arc<LogRing>, tx: &Broadcaster, config: &GuiConfig) {
     let disk = Arc::new(ArcSwap::from_pointee(DiskUsage::default()));
 
     spawn_disk_scanner(server, &disk, config.disk_scan_secs);
-    spawn_fast_sampler(server, side, &disk, config.refresh_ms);
+    spawn_fast_sampler(server, ring, tx, &disk, config.refresh_ms);
 }
 
 fn spawn_fast_sampler(
     server: &Arc<Server>,
-    side: &GuiSide,
+    ring: &Arc<LogRing>,
+    tx: &Broadcaster,
     disk: &Arc<ArcSwap<DiskUsage>>,
     refresh_ms: u64,
 ) {
     let server = server.clone();
-    let snapshot = side.snapshot.clone();
+    let ring = ring.clone();
+    let tx = tx.clone();
     let disk = disk.clone();
     // The OS reports CPU use as a delta between samples, so anything under Sysinfo's minimum
     // interval would report noise.
@@ -65,12 +70,12 @@ fn spawn_fast_sampler(
     server.clone().spawn_task(async move {
         let mut system = SystemSampler::new();
         let started = Instant::now();
-        let meta = Arc::new(server_meta(&server));
 
         let mut last_net = (crate::metrics::bytes_in(), crate::metrics::bytes_out());
         let mut last_at = Instant::now();
         // Reused when `active_chunks` is being written and a read would block the tick.
         let mut last_worlds: Vec<WorldRow> = Vec::new();
+        let mut log_cursor = 0u64;
 
         while !SHOULD_STOP.load(Ordering::Relaxed) {
             let stats = system.sample();
@@ -88,7 +93,7 @@ fn spawn_fast_sampler(
             let worlds = collect_worlds(&server, &last_worlds, &disk.per_world, &players);
             last_worlds.clone_from(&worlds);
 
-            snapshot.store(Arc::new(Snapshot {
+            let _ = tx.send(ServerMessage::Snapshot(Snapshot {
                 server_ready: true,
                 cpu_total: stats.cpu_total,
                 cpu_per_core: stats.cpu_per_core,
@@ -109,8 +114,13 @@ fn spawn_fast_sampler(
                 net_in_bps: net_in,
                 net_out_bps: net_out,
                 uptime_secs: started.elapsed().as_secs(),
-                meta: meta.clone(),
             }));
+
+            let mut new_lines = Vec::new();
+            log_cursor = ring.drain_since(log_cursor, &mut new_lines);
+            if !new_lines.is_empty() {
+                let _ = tx.send(ServerMessage::LogLines(new_lines));
+            }
 
             tokio::select! {
                 () = tokio::time::sleep(interval) => {},
@@ -398,7 +408,7 @@ fn world_time_and_weather(world: &crate::world::World) -> (i64, String) {
     (time_of_day, weather)
 }
 
-fn server_meta(server: &Server) -> ServerMeta {
+pub(super) fn server_meta(server: &Server) -> ServerMeta {
     let networking = &server.advanced_config.networking;
 
     ServerMeta {

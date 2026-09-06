@@ -7,8 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-arc-swap.workspace = true
 sysinfo = { workspace = true, features = ["system", "disk", "component"] }
+serde = { workspace = true, features = ["derive"] }
+postcard.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
 
 [lints]
 workspace = true

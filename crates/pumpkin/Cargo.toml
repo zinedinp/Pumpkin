@@ -109,8 +109,8 @@ rustc_version_runtime.workspace = true
 
 flate2.workspace = true
 console-subscriber = { workspace = true, optional = true }
-pumpkin-gui = { git = "https://github.com/zinedinp/pumpkin-gui.git", optional = true }
-pumpkin-gui-api = { path = "../pumpkin-gui-api", optional = true }
+# Qt-free wire protocol shared with the standalone `pumpkin-gui` binary; never links Qt/cxx-qt.
+pumpkin-gui-api = { path = "../pumpkin-gui-api" }
 
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
@@ -135,8 +135,8 @@ tempfile.workspace = true
 
 [features]
 console-subscriber = ["dep:console-subscriber"]
-# Opt-in: links against Qt6, which would otherwise be required to start the server at all.
-gui = ["dep:pumpkin-gui", "dep:pumpkin-gui-api"]
+# Enables the local IPC listener and auto-spawn of the separate `pumpkin-gui` binary.
+gui = []
 
 [lints]
 workspace = true

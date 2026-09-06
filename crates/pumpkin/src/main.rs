@@ -33,17 +33,14 @@ use pumpkin::{
     stop_or_exit_server,
 };
 use pumpkin::{PumpkinServer, stop_server};
-#[cfg(feature = "gui")]
-use pumpkin_gui_api::GuiSide;
 
 mod cli;
 
-/// The GUI handle, or a placeholder in builds without the feature, so `server_main` has one
-/// signature either way.
+/// Whether GUI mode was requested, so `server_main` has one signature either way.
 #[cfg(feature = "gui")]
-type MaybeGui = Option<GuiSide>;
+type MaybeGui = bool;
 #[cfg(not(feature = "gui"))]
-type MaybeGui = Option<std::convert::Infallible>;
+type MaybeGui = ();
 
 use pumpkin_config::{LoadConfiguration, PumpkinConfig};
 use pumpkin_util::text::{
@@ -89,48 +86,18 @@ fn main() {
     // if the launcher isn't a tty, it is treated the same as `--gui`
     #[cfg(feature = "gui")]
     if args.gui || !io::stdin().is_terminal() {
-        run_with_gui(&runtime, config);
-        return;
+        // `colored` (behind `to_pretty_console()`) auto-disables ANSI codes when stdout isn't a
+        // tty
+        colored::control::set_override(true);
+        runtime.block_on(server_main(config, true));
+        exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
     }
 
     let _ = &args;
-    runtime.block_on(server_main(config, None));
-    exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
-}
-
-/// Runs the server on a worker thread and Qt's event loop on the main thread.
-///
-/// Qt requires its event loop on the process's main thread, and macOS enforces it.
-#[cfg(feature = "gui")]
-fn run_with_gui(runtime: &tokio::runtime::Runtime, config: PumpkinConfig) {
-    // `colored` (behind `to_pretty_console()`) auto-disables ANSI codes when stdout isn't a tty
-    colored::control::set_override(true);
-
-    let side = pumpkin::gui::side(&config.advanced.gui);
-
-    let server_side = side.clone();
-    let handle = runtime.handle().clone();
-    let server_thread = std::thread::Builder::new()
-        .name("Pumpkin-Server".into())
-        .spawn(move || handle.block_on(server_main(config, Some(server_side))));
-
-    let Ok(server_thread) = server_thread else {
-        eprintln!("Failed to spawn the server thread");
-        exit(1);
-    };
-
-    match pumpkin::gui::run(side) {
-        Ok(_) => {
-            // Closing the window shuts the server down; the process only ends once the world is
-            // saved.
-            stop_server();
-        }
-        Err(err) => {
-            warn!("Could not open the GUI ({err}); continuing without a window");
-        }
-    }
-
-    let _ = server_thread.join();
+    #[cfg(feature = "gui")]
+    runtime.block_on(server_main(config, false));
+    #[cfg(not(feature = "gui"))]
+    runtime.block_on(server_main(config, ()));
     exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
 }
 
@@ -161,9 +128,9 @@ async fn server_main(config: PumpkinConfig, gui: MaybeGui) {
     let vanilla_data = VanillaData::load();
 
     #[cfg(feature = "gui")]
-    let extra_layer = gui
-        .as_ref()
-        .map(|side| pumpkin::gui::log_layer(side.logs.clone()));
+    let gui_log_ring = gui.then(|| pumpkin::gui::new_log_ring(&config.advanced.gui));
+    #[cfg(feature = "gui")]
+    let extra_layer = gui_log_ring.clone().map(pumpkin::gui::log_layer);
     #[cfg(not(feature = "gui"))]
     let extra_layer = None;
 
@@ -220,8 +187,18 @@ async fn server_main(config: PumpkinConfig, gui: MaybeGui) {
     let pumpkin_server = PumpkinServer::new(config.basic, config.advanced, vanilla_data).await;
 
     #[cfg(feature = "gui")]
-    if let Some(side) = gui.as_ref() {
-        pumpkin::gui::attach(&pumpkin_server.server, side, &gui_config);
+    if let Some(ring) = gui_log_ring.as_ref() {
+        match pumpkin::gui::attach(&pumpkin_server.server, ring, &gui_config) {
+            Ok(endpoint) => {
+                if let Err(err) = pumpkin::gui::spawn_gui_process(&endpoint) {
+                    warn!(
+                        "Could not launch pumpkin-gui ({err}); continuing headless. Run \
+                         `pumpkin-gui --connect {endpoint}` manually if needed."
+                    );
+                }
+            }
+            Err(err) => warn!("Could not start the GUI IPC listener: {err}"),
+        }
     }
     let _ = &gui_config;
 

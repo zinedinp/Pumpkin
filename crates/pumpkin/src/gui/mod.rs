@@ -1,92 +1,53 @@
-//! Bridges the running server to the optional Qt6 window.
+//! Bridges the running server to the optional GUI process over a local IPC socket.
 
+mod ipc;
 mod log_layer;
 mod sampler;
+mod spawn_process;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use pumpkin_config::gui::GuiConfig;
-use pumpkin_gui_api::{GuiCommands, GuiSide, LogLevel, ThemePreference};
+use pumpkin_gui_api::{LogLevel, LogRing};
 
-use crate::command::{self, CommandSender};
-use crate::plugin::server::server_command::ServerCommandEvent;
+pub use ipc::{is_attached, notify_shutdown};
+pub use log_layer::layer as log_layer;
+
+use crate::command;
 use crate::server::Server;
 
-pub use log_layer::layer as log_layer;
-// Re-exported so `main.rs` never has to name `pumpkin_gui` directly, keeping the optional
-// dependency behind one module.
-pub use pumpkin_gui::{GuiError, run};
-
-static ATTACHED: AtomicBool = AtomicBool::new(false);
-
-/// True once [`attach`] has run, so `PumpkinServer::start` can leave the TTY alone.
+/// Builds the log ring the sampler and the IPC layer share; created before the server exists so
+/// early boot log lines are not lost.
 #[must_use]
-pub fn is_attached() -> bool {
-    ATTACHED.load(Ordering::Acquire)
+pub fn new_log_ring(config: &GuiConfig) -> Arc<LogRing> {
+    Arc::new(LogRing::new(config.log_buffer_lines))
 }
 
-/// Asks the dashboard to leave the Qt event loop. No-op if the window is not running.
-pub fn notify_shutdown() {
-    pumpkin_gui::notify_shutdown();
-}
-
-/// Creates the handle the window and the server share.
-#[must_use]
-pub fn side(config: &GuiConfig) -> GuiSide {
-    GuiSide::new(
-        ThemePreference::from_config(&config.theme),
-        config.log_buffer_lines,
-    )
-}
-
-/// Connects a started server to the window: starts the samplers and enables the console.
-pub fn attach(server: &Arc<Server>, side: &GuiSide, config: &GuiConfig) {
-    ATTACHED.store(true, Ordering::Release);
-
-    let commands: Arc<dyn GuiCommands> = Arc::new(ServerCommands {
-        server: server.clone(),
-    });
-    let _ = side.commands.set(commands);
+/// Starts the local IPC listener and the samplers. Returns the endpoint a `pumpkin-gui` process
+/// should connect to.
+pub fn attach(
+    server: &Arc<Server>,
+    ring: &Arc<LogRing>,
+    config: &GuiConfig,
+) -> std::io::Result<String> {
+    let (endpoint, broadcaster) = ipc::spawn_listener(server.clone(), config)?;
 
     // Console command replies go through `println!`, not `tracing`, so the log layer cannot see
     // them. `text.to_pretty_console()` (e.g. `/tps`, join/leave messages) carries real ANSI
-    // colours and OSC 8 hyperlinks, same as it does in the terminal
-    let logs = side.logs.clone();
+    // colours and OSC 8 hyperlinks, same as it does in the terminal.
+    let logs = ring.clone();
     command::set_console_sink(Box::new(move |line| {
         logs.push(LogLevel::Info, "console".to_owned(), line);
     }));
 
-    sampler::spawn(server, side, config);
+    sampler::spawn(server, ring, &broadcaster, config);
+    Ok(endpoint)
 }
 
-struct ServerCommands {
-    server: Arc<Server>,
-}
-
-impl GuiCommands for ServerCommands {
-    fn submit(&self, line: String) {
-        // Exactly the path `setup_stdin_console` takes, so plugins see the same event and the
-        // command behaves as if it had been typed in the terminal.
-        let server = self.server.clone();
-        self.server.spawn_task(async move {
-            let mut event = ServerCommandEvent::new(line.clone());
-            server.plugin_manager.fire(&server, &mut event).await;
-
-            if !event.cancelled {
-                server
-                    .command_dispatcher
-                    .load()
-                    .handle_command(&CommandSender::Console.into_source(&server), &line);
-            }
-        });
-    }
-
-    fn completions(&self, line: &str, cursor: usize) -> Vec<String> {
-        crate::logging::console_completions(&self.server, line, cursor)
-    }
-
-    fn request_stop(&self) {
-        self.submit("stop".to_owned());
-    }
+/// Launches `pumpkin-gui` connected to `endpoint`.
+///
+/// Failure is not fatal to the server: the listener and samplers above keep running headless, and
+/// a manually-started `pumpkin-gui --connect <endpoint>` can attach later.
+pub fn spawn_gui_process(endpoint: &str) -> std::io::Result<std::process::Child> {
+    spawn_process::spawn(endpoint)
 }
