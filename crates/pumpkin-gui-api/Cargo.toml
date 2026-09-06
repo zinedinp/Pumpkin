@@ -6,12 +6,23 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+host = ["dep:sysinfo"]
+
 [dependencies]
-sysinfo = { workspace = true, features = ["system", "disk", "component"] }
+sysinfo = { workspace = true, features = [
+    "system",
+    "disk",
+    "component",
+], optional = true }
 serde = { workspace = true, features = ["derive"] }
 postcard.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

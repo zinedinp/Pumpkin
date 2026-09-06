@@ -140,9 +140,9 @@ fn next_url(text: &str) -> Option<(usize, usize)> {
     (end > 0).then_some((start, start + end))
 }
 
-/// Placeholder colour for a link with no ANSI colour of its own. Qt Quick's `TextEdit` has no
-/// `linkColor` property to redirect, and an anchor without an explicit `color` in its style
-/// renders in Qt's own built-in link blue regardless of any ancestor's colour.
+/// Placeholder colour for a link with no ANSI colour of its own.
+///
+/// A frontend substitutes its own theme colour for this token.
 pub const DEFAULT_LINK_COLOR: &str = "@default-link-color@";
 
 /// Emits a link, always with an explicit colour: `color` if this run had an ANSI one, otherwise

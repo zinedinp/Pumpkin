@@ -109,8 +109,7 @@ rustc_version_runtime.workspace = true
 
 flate2.workspace = true
 console-subscriber = { workspace = true, optional = true }
-# Qt-free wire protocol shared with the standalone `pumpkin-gui` binary; never links Qt/cxx-qt.
-pumpkin-gui-api = { path = "../pumpkin-gui-api" }
+pumpkin-gui-api = { path = "../pumpkin-gui-api", features = ["host"] }
 
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }

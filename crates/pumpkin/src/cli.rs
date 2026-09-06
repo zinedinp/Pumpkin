@@ -158,20 +158,16 @@ fn help() -> String {
     }
 }
 
+/// The format lives in `pumpkin-gui-api` beside the parser the GUI probes it with.
 fn version_line() -> String {
-    let gui_marker = if cfg!(feature = "gui") {
-        format!(", {}", pumpkin_gui_api::GUI_VERSION_MARKER)
-    } else {
-        String::new()
-    };
-    format!(
-        "pumpkin {} (commit {}, {}{gui_marker})",
+    pumpkin_gui_api::format_version_line(
         env!("CARGO_PKG_VERSION"),
         env!("GIT_HASH"),
         if cfg!(debug_assertions) {
             "debug"
         } else {
             "release"
-        }
+        },
+        cfg!(feature = "gui"),
     )
 }

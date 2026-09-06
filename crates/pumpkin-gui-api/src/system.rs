@@ -7,35 +7,16 @@ use sysinfo::{
     ProcessesToUpdate, RefreshKind, System,
 };
 
-/// What one host sample yields.
-#[derive(Clone, Debug, Default)]
-pub struct SystemStats {
-    /// Total CPU usage in percent, `0.0..=100.0`.
-    pub cpu_total: f32,
-    /// Per-core usage in percent, in the order the OS reports cores.
-    pub cpu_per_core: Vec<f32>,
-    /// Resident set size of this process.
-    pub mem_process_rss: u64,
-    pub mem_system_used: u64,
-    pub mem_system_total: u64,
-    /// CPU package temperature in degrees Celsius, if the machine exposes one.
-    pub cpu_temp_c: Option<f32>,
-}
+use crate::model::{DiskSpace, SystemStats};
 
 const CPU_SENSOR_LABELS: [&str; 5] = ["tctl", "tdie", "package id 0", "tccd1", "core 0"];
-
-/// Free and total bytes of the filesystem a path lives on.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DiskSpace {
-    pub free: u64,
-    pub total: u64,
-}
 
 pub struct SystemSampler {
     system: System,
     disks: Disks,
     components: Components,
     pid: Pid,
+    temp_sensor: Option<usize>,
 }
 
 impl SystemSampler {
@@ -52,6 +33,7 @@ impl SystemSampler {
             disks: Disks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
             pid: Pid::from_u32(std::process::id()),
+            temp_sensor: None,
         }
     }
 
@@ -88,27 +70,36 @@ impl SystemSampler {
     fn cpu_temperature(&mut self) -> Option<f32> {
         self.components.refresh(false);
 
-        let labelled: Vec<(String, f32)> = self
+        if self.temp_sensor.is_none() {
+            self.temp_sensor = Some(self.find_temp_sensor()?);
+        }
+
+        let index = self.temp_sensor?;
+        self.components.list().get(index)?.temperature()
+    }
+
+    /// Picks the sensor to read, most specific label first.
+    fn find_temp_sensor(&self) -> Option<usize> {
+        let labels: Vec<(usize, String)> = self
             .components
             .list()
             .iter()
-            .filter_map(|component| {
-                component
-                    .temperature()
-                    .map(|temp| (component.label().to_lowercase(), temp))
-            })
+            .enumerate()
+            .filter(|(_, component)| component.temperature().is_some())
+            .map(|(index, component)| (index, component.label().to_lowercase()))
             .collect();
 
-        for wanted in CPU_SENSOR_LABELS {
-            if let Some((_, temp)) = labelled.iter().find(|(label, _)| label.contains(wanted)) {
-                return Some(*temp);
-            }
-        }
+        let find = |matches: &dyn Fn(&str) -> bool| {
+            labels
+                .iter()
+                .find(|(_, label)| matches(label))
+                .map(|(index, _)| *index)
+        };
 
-        labelled
+        CPU_SENSOR_LABELS
             .iter()
-            .find(|(label, _)| label.contains("cpu") || label.contains("k10temp"))
-            .map(|(_, temp)| *temp)
+            .find_map(|wanted| find(&|label| label.contains(wanted)))
+            .or_else(|| find(&|label| label.contains("cpu") || label.contains("k10temp")))
     }
 
     /// Free and total space of the filesystem holding `path`.
@@ -148,7 +139,9 @@ pub fn directory_size(root: &Path) -> u64 {
         };
 
         for entry in entries.flatten() {
-            let Ok(metadata) = entry.metadata() else {
+            // `symlink_metadata`, not `metadata`: a symlinked directory would otherwise be walked,
+            // and a loop would never terminate.
+            let Ok(metadata) = entry.path().symlink_metadata() else {
                 continue;
             };
 

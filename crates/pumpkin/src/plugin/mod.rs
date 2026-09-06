@@ -1082,6 +1082,36 @@ impl PluginManager {
         plugins.iter().map(|p| p.metadata.clone()).collect()
     }
 
+    /// The file a loaded plugin came from, and whether it is currently active.
+    ///
+    /// `unload_plugin` takes a plugin name but `try_load_plugin` takes a file, so reloading one
+    /// needs the path it was loaded from. Kept separate from [`PluginMetadata`], whose shape is
+    /// mirrored guest-side.
+    #[must_use]
+    pub fn plugin_file(&self, name: &str) -> Option<(PathBuf, bool)> {
+        let plugins = self
+            .plugins
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        plugins
+            .iter()
+            .find(|p| p.metadata.name == name)
+            .map(|p| (p.path.clone(), p.is_active))
+    }
+
+    /// Every loaded plugin's file and active flag, keyed by plugin name.
+    #[must_use]
+    pub fn plugin_files(&self) -> Vec<(String, PathBuf, bool)> {
+        let plugins = self
+            .plugins
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        plugins
+            .iter()
+            .map(|p| (p.metadata.name.clone(), p.path.clone(), p.is_active))
+            .collect()
+    }
+
     /// Unload a plugin by name
     pub async fn unload_plugin(&self, name: &str) -> Result<(), ManagerError> {
         let mut plugin = {

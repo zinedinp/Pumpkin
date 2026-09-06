@@ -109,9 +109,29 @@ impl LogRing {
             html: rendered.html,
         });
 
-        while inner.lines.len() > self.capacity {
-            inner.lines.pop_front();
+        inner.trim(self.capacity);
+    }
+
+    /// Appends lines that already carry a `seq`, as received from a server.
+    ///
+    /// The counterpart to [`Self::push`] for a client mirroring someone else's ring: the ANSI has
+    /// already been rendered upstream, so re-rendering here would be wrong as well as wasteful.
+    pub fn extend(&self, lines: Vec<LogLine>) {
+        if lines.is_empty() {
+            return;
         }
+
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        for line in lines {
+            inner.next_seq = inner.next_seq.max(line.seq + 1);
+            inner.lines.push_back(line);
+        }
+
+        inner.trim(self.capacity);
     }
 
     /// Appends every line newer than `cursor` to `out` and returns the new cursor.
@@ -123,20 +143,54 @@ impl LogRing {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
-        out.extend(
-            inner
-                .lines
-                .iter()
-                .filter(|line| line.seq >= cursor)
-                .cloned(),
-        );
+        // `seq` is monotonic and the deque stays sorted, so the cursor maps straight to an offset
+        // rather than a scan of every retained line.
+        let start = inner.lines.front().map_or(0, |front| {
+            usize::try_from(cursor.saturating_sub(front.seq))
+                .unwrap_or(usize::MAX)
+                .min(inner.lines.len())
+        });
+
+        out.extend(inner.lines.iter().skip(start).cloned());
 
         inner.next_seq
     }
 }
 
+impl LogRingInner {
+    fn trim(&mut self, capacity: usize) {
+        while self.lines.len() > capacity {
+            self.lines.pop_front();
+        }
+    }
+}
+
+/// What one host sample yields.
+///
+/// Produced by `SystemSampler` (host builds only), but the shape is part of the wire contract.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SystemStats {
+    /// Total CPU usage in percent, `0.0..=100.0`.
+    pub cpu_total: f32,
+    /// Per-core usage in percent, in the order the OS reports cores.
+    pub cpu_per_core: Vec<f32>,
+    /// Resident set size of this process.
+    pub mem_process_rss: u64,
+    pub mem_system_used: u64,
+    pub mem_system_total: u64,
+    /// CPU package temperature in degrees Celsius, if the machine exposes one.
+    pub cpu_temp_c: Option<f32>,
+}
+
+/// Free and total bytes of the filesystem a path lives on.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct DiskSpace {
+    pub free: u64,
+    pub total: u64,
+}
+
 /// One row of the player table.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlayerRow {
     pub name: String,
     pub uuid: String,
@@ -192,15 +246,7 @@ pub struct Snapshot {
     /// False until the server has finished starting up.
     pub server_ready: bool,
 
-    pub cpu_total: f32,
-    pub cpu_per_core: Vec<f32>,
-    /// CPU package temperature in degrees Celsius; `None` where no sensor is exposed.
-    pub cpu_temp_c: Option<f32>,
-
-    /// Resident set size of this process.
-    pub mem_process_rss: u64,
-    pub mem_system_used: u64,
-    pub mem_system_total: u64,
+    pub system: SystemStats,
 
     pub tps: f64,
     pub mspt: f64,
@@ -212,8 +258,7 @@ pub struct Snapshot {
 
     /// Total size of all world folders; `None` until the slow sampler has run once.
     pub worlds_size_bytes: Option<u64>,
-    pub disk_free: u64,
-    pub disk_total: u64,
+    pub disk: DiskSpace,
 
     pub net_in_bps: u64,
     pub net_out_bps: u64,

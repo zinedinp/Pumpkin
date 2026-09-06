@@ -11,7 +11,7 @@ use uuid::Uuid;
 use arc_swap::ArcSwap;
 use pumpkin_config::gui::GuiConfig;
 use pumpkin_gui_api::{
-    LogRing, PlayerRow, ServerMessage, ServerMeta, Snapshot, SystemSampler, WorldRow,
+    DiskSpace, LogRing, PlayerRow, ServerMessage, ServerMeta, Snapshot, SystemSampler, WorldRow,
 };
 
 use super::ipc::Broadcaster;
@@ -41,8 +41,16 @@ impl WorldScan {
 struct DiskUsage {
     worlds_size: Option<u64>,
     per_world: Vec<(String, u64)>,
-    free: u64,
-    total: u64,
+    space: DiskSpace,
+}
+
+/// Waits out one sampling interval, returning true when the server is shutting down and the
+/// caller should stop rather than sample again.
+async fn stopping_during(interval: Duration) -> bool {
+    tokio::select! {
+        () = tokio::time::sleep(interval) => SHOULD_STOP.load(Ordering::Relaxed),
+        () = STOP_INTERRUPT.cancelled() => true,
+    }
 }
 
 pub fn spawn(server: &Arc<Server>, ring: &Arc<LogRing>, tx: &Broadcaster, config: &GuiConfig) {
@@ -79,7 +87,7 @@ fn spawn_fast_sampler(
 
         while !SHOULD_STOP.load(Ordering::Relaxed) {
             let stats = system.sample();
-            let disk = (*disk.load()).clone();
+            let disk = disk.load();
 
             let now = Instant::now();
             let elapsed = now.duration_since(last_at).as_secs_f64().max(0.001);
@@ -95,12 +103,7 @@ fn spawn_fast_sampler(
 
             let _ = tx.send(ServerMessage::Snapshot(Snapshot {
                 server_ready: true,
-                cpu_total: stats.cpu_total,
-                cpu_per_core: stats.cpu_per_core,
-                cpu_temp_c: stats.cpu_temp_c,
-                mem_process_rss: stats.mem_process_rss,
-                mem_system_used: stats.mem_system_used,
-                mem_system_total: stats.mem_system_total,
+                system: stats,
                 // `get_tps()` is the theoretical rate the measured tick time would allow, which
                 // reads as thousands of TPS on an idle server.
                 tps: server.get_tps().min(f64::from(server.basic_config.tps)),
@@ -109,8 +112,7 @@ fn spawn_fast_sampler(
                 players,
                 worlds,
                 worlds_size_bytes: disk.worlds_size,
-                disk_free: disk.free,
-                disk_total: disk.total,
+                disk: disk.space,
                 net_in_bps: net_in,
                 net_out_bps: net_out,
                 uptime_secs: started.elapsed().as_secs(),
@@ -122,9 +124,8 @@ fn spawn_fast_sampler(
                 let _ = tx.send(ServerMessage::LogLines(new_lines));
             }
 
-            tokio::select! {
-                () = tokio::time::sleep(interval) => {},
-                () = STOP_INTERRUPT.cancelled() => break,
+            if stopping_during(interval).await {
+                break;
             }
         }
     });
@@ -156,7 +157,7 @@ fn spawn_disk_scanner(server: &Arc<Server>, disk: &Arc<ArcSwap<DiskUsage>>, scan
             // Walking a world directory is slow and blocking; keep it off the async runtime.
             let scanned = tokio::task::spawn_blocking(move || {
                 let mut system = SystemSampler::new();
-                let free = scans
+                let space = scans
                     .first()
                     .and_then(|scan| system.disk_space_for(&scan.root))
                     .unwrap_or_default();
@@ -181,8 +182,7 @@ fn spawn_disk_scanner(server: &Arc<Server>, disk: &Arc<ArcSwap<DiskUsage>>, scan
                 DiskUsage {
                     worlds_size: Some(worlds_size),
                     per_world,
-                    free: free.free,
-                    total: free.total,
+                    space,
                 }
             })
             .await;
@@ -191,9 +191,8 @@ fn spawn_disk_scanner(server: &Arc<Server>, disk: &Arc<ArcSwap<DiskUsage>>, scan
                 disk.store(Arc::new(scanned));
             }
 
-            tokio::select! {
-                () = tokio::time::sleep(interval) => {},
-                () = STOP_INTERRUPT.cancelled() => break,
+            if stopping_during(interval).await {
+                break;
             }
         }
     });
@@ -227,16 +226,26 @@ fn blank_player(uuid: Uuid, name: String) -> PlayerRow {
     PlayerRow {
         name,
         uuid: uuid.to_string(),
-        edition: String::new(),
+        // Not `Default`: 0 would render as a real 0ms ping for a player who is not online.
         ping_ms: -1,
-        dimension: String::new(),
-        gamemode: String::new(),
-        online_secs: 0,
-        online: false,
-        operator: false,
-        banned: false,
-        whitelisted: false,
+        ..PlayerRow::default()
     }
+}
+
+/// Folds one on-disk player list into `by_uuid`
+fn merge_entry(
+    by_uuid: &mut HashMap<Uuid, PlayerRow>,
+    uuid: Uuid,
+    name: &str,
+    set: impl FnOnce(&mut PlayerRow),
+) {
+    let row = by_uuid
+        .entry(uuid)
+        .or_insert_with(|| blank_player(uuid, name.to_owned()));
+    if row.name.is_empty() {
+        name.clone_into(&mut row.name);
+    }
+    set(row);
 }
 
 fn collect_players(server: &Server) -> Vec<PlayerRow> {
@@ -265,55 +274,40 @@ fn collect_players(server: &Server) -> Vec<PlayerRow> {
         row.operator |= player.permission_lvl.load() != PermissionLvl::Zero;
     });
 
+    // A poisoned lock just means this list contributes nothing to the sample.
     if let Ok(ops) = server.data.operator_config.read() {
         for entry in &ops.ops {
-            let row = by_uuid
-                .entry(entry.uuid)
-                .or_insert_with(|| blank_player(entry.uuid, entry.name.clone()));
-            if row.name.is_empty() {
-                row.name.clone_from(&entry.name);
-            }
-            row.operator = true;
+            merge_entry(&mut by_uuid, entry.uuid, &entry.name, |row| {
+                row.operator = true;
+            });
         }
     }
 
     if let Ok(bans) = server.data.banned_player_list.read() {
         for entry in &bans.banned_players {
-            let row = by_uuid
-                .entry(entry.uuid)
-                .or_insert_with(|| blank_player(entry.uuid, entry.name.clone()));
-            if row.name.is_empty() {
-                row.name.clone_from(&entry.name);
-            }
-            row.banned = true;
+            merge_entry(&mut by_uuid, entry.uuid, &entry.name, |row| {
+                row.banned = true;
+            });
         }
     }
 
     if let Ok(whitelist) = server.data.whitelist_config.read() {
         for entry in &whitelist.whitelist {
-            let row = by_uuid
-                .entry(entry.uuid)
-                .or_insert_with(|| blank_player(entry.uuid, entry.name.clone()));
-            if row.name.is_empty() {
-                row.name.clone_from(&entry.name);
-            }
-            row.whitelisted = true;
+            merge_entry(&mut by_uuid, entry.uuid, &entry.name, |row| {
+                row.whitelisted = true;
+            });
         }
     }
 
     if let Ok(cache) = server.data.user_cache.read() {
         for (uuid, name, edition) in cache.iter_profiles() {
-            let row = by_uuid
-                .entry(uuid)
-                .or_insert_with(|| blank_player(uuid, name.to_owned()));
-            if row.name.is_empty() {
-                name.clone_into(&mut row.name);
-            }
-            if row.edition.is_empty()
-                && let Some(edition) = edition
-            {
-                edition.clone_into(&mut row.edition);
-            }
+            merge_entry(&mut by_uuid, uuid, name, |row| {
+                if row.edition.is_empty()
+                    && let Some(edition) = edition
+                {
+                    edition.clone_into(&mut row.edition);
+                }
+            });
         }
     }
 

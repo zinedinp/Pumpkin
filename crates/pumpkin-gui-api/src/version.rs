@@ -6,6 +6,17 @@ pub const VERSION_PREFIX: &str = "pumpkin ";
 /// parenthesised group, e.g. `pumpkin 0.1.0-dev (commit 38fd0c2, release, gui)`.
 pub const GUI_VERSION_MARKER: &str = "gui";
 
+/// Builds the `pumpkin --version` line the functions below parse.
+#[must_use]
+pub fn format_version_line(version: &str, commit: &str, profile: &str, gui: bool) -> String {
+    let marker = if gui {
+        format!(", {GUI_VERSION_MARKER}")
+    } else {
+        String::new()
+    };
+    format!("{VERSION_PREFIX}{version} (commit {commit}, {profile}{marker})")
+}
+
 /// True if `line` looks like a Pumpkin version line at all, regardless of capability.
 #[must_use]
 pub fn is_pumpkin_version_line(line: &str) -> bool {

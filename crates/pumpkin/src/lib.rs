@@ -227,12 +227,26 @@ pub static STOP_INTERRUPT: LazyLock<CancellationToken> = LazyLock::new(Cancellat
 pub static SERVER_IS_STOPPING: AtomicBool = AtomicBool::new(false);
 pub static CRASH_REPORT: OnceLock<CrashReport> = OnceLock::new();
 pub static SERVER_EXIT_CODE: AtomicI32 = AtomicI32::new(0);
+/// Set by the `restart` command; `main` re-execs instead of exiting once the shutdown completes.
+pub static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 pub fn stop_server() {
     SHOULD_STOP.store(true, Ordering::Relaxed);
     STOP_INTERRUPT.cancel();
     #[cfg(feature = "gui")]
     crate::gui::notify_shutdown();
+}
+
+/// Shuts down as `stop` does, but asks `main` to start the same binary again afterwards.
+pub fn restart_server() {
+    RESTART_REQUESTED.store(true, Ordering::Release);
+    stop_server();
+}
+
+/// True if the shutdown now finishing was asked to come back up.
+#[must_use]
+pub fn restart_requested() -> bool {
+    RESTART_REQUESTED.load(Ordering::Acquire)
 }
 
 pub fn stop_or_exit_server() {

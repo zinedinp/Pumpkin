@@ -52,8 +52,48 @@ const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
+/// The command line and working directory as the process was started with, captured before
+/// anything can change them so `restart` re-runs exactly what the user launched.
+struct Launch {
+    program: std::ffi::OsString,
+    args: Vec<std::ffi::OsString>,
+    cwd: std::path::PathBuf,
+}
+
+/// Replaces this process with a fresh one, or reports why it could not.
+///
+/// Only reached on a clean shutdown: re-execing after a crash would turn a crash into a loop.
+fn restart(launch: &Launch) -> std::io::Error {
+    let mut command = std::process::Command::new(&launch.program);
+    command.args(&launch.args).current_dir(&launch.cwd);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // `exec` only returns on failure.
+        command.exec()
+    }
+    #[cfg(not(unix))]
+    {
+        // No `exec` on Windows: start the replacement and let this process end.
+        match command.spawn() {
+            Ok(_) => exit(0),
+            Err(err) => err,
+        }
+    }
+}
+
 fn main() {
     let _ = MAIN_THREAD.set(thread::current().id());
+
+    let launch = Launch {
+        program: std::env::current_exe().map_or_else(
+            |_| std::env::args_os().next().unwrap_or_default(),
+            std::ffi::OsString::from,
+        ),
+        args: std::env::args_os().skip(1).collect(),
+        cwd: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+    };
 
     let args = match cli::parse(std::env::args().skip(1), cli::Environment::detect()) {
         cli::Action::Run(args) => args,
@@ -89,7 +129,7 @@ fn main() {
         // tty
         colored::control::set_override(true);
         runtime.block_on(server_main(config, true));
-        exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
+        finish(&launch);
     }
 
     let _ = &args;
@@ -97,7 +137,21 @@ fn main() {
     runtime.block_on(server_main(config, false));
     #[cfg(not(feature = "gui"))]
     runtime.block_on(server_main(config, ()));
-    exit(SERVER_EXIT_CODE.load(Ordering::Acquire));
+    finish(&launch);
+}
+
+/// Ends the process, or starts it over when `restart` asked for it.
+fn finish(launch: &Launch) -> ! {
+    let code = SERVER_EXIT_CODE.load(Ordering::Acquire);
+
+    // Never re-exec out of a crash, or one bad startup becomes an endless restart loop.
+    if pumpkin::restart_requested() && CRASH_REPORT.get().is_none() && code == 0 {
+        let err = restart(launch);
+        eprintln!("Could not restart, exiting instead: {err}");
+        exit(1);
+    }
+
+    exit(code);
 }
 
 // WARNING: All rayon calls from the tokio runtime must be non-blocking! This includes things
@@ -105,8 +159,8 @@ fn main() {
 // runtime with a channel! See `Level::fetch_chunks` as an example!
 #[allow(clippy::too_many_lines)]
 async fn server_main(config: PumpkinConfig, gui: MaybeGui) {
-    // Only read in `gui` builds; binding it keeps one signature for both.
-    let _ = &gui;
+    #[cfg(not(feature = "gui"))]
+    let () = gui;
 
     // reqwest is built with `rustls-no-provider`, so pick the ring provider (the one
     // wasmtime-wasi-http/rtc already force) before any client can be constructed.

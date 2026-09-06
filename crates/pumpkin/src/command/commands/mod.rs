@@ -55,6 +55,7 @@ mod pumpkin;
 mod raid;
 mod random;
 mod recipe;
+mod restart;
 mod reload;
 mod r#return;
 mod ride;
@@ -91,6 +92,7 @@ mod trigger;
 mod waypoint;
 mod weather;
 mod whitelist;
+mod world;
 mod worldborder;
 
 #[allow(clippy::too_many_lines)]
@@ -116,6 +118,7 @@ pub fn default_dispatcher(
     ride::register(&mut dispatcher, registry);
     recipe::register(&mut dispatcher, registry);
     reload::register(&mut dispatcher, registry);
+    restart::register(&mut dispatcher, registry);
     help::register(&mut dispatcher, registry);
     kill::register(&mut dispatcher, registry);
     op::register(&mut dispatcher, registry);
@@ -148,6 +151,7 @@ pub fn default_dispatcher(
     r#return::register(&mut dispatcher, registry);
     schedule::register(&mut dispatcher, registry);
     fetchprofile::register(&mut dispatcher, registry);
+    world::register(&mut dispatcher, registry);
     worldborder::register(&mut dispatcher, registry);
     particle::register(&mut dispatcher, registry);
     playsound::register(&mut dispatcher, registry);

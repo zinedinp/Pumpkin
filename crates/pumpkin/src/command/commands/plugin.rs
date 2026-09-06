@@ -162,6 +162,60 @@ impl CommandExecutor for UnloadExecutor {
     }
 }
 
+struct ReloadExecutor;
+
+impl CommandExecutor for ReloadExecutor {
+    fn execute(&self, context: &CommandContext) -> CommandExecutorResult {
+        let plugin_name = StringArgumentType::get(context, "plugin")?.to_string();
+        let server_arc = context.server().clone();
+
+        // Composed from unload + load: there is no single reload on the manager, and the file to
+        // load back is only known while the plugin is still registered.
+        let Some((path, _active)) = server_arc.plugin_manager.plugin_file(&plugin_name) else {
+            context.source.send_feedback(
+                TextComponent::text(format!("Plugin {plugin_name} is not loaded")),
+                false,
+            );
+            return Ok(1);
+        };
+
+        let source_clone = context.source.clone();
+        let server_clone = server_arc.clone();
+        server_arc.spawn_task(async move {
+            if let Err(e) = server_clone.plugin_manager.unload_plugin(&plugin_name).await {
+                source_clone.send_feedback(
+                    TextComponent::text(format!("Failed to unload plugin {plugin_name}: {e}"))
+                        .color_named(NamedColor::Red),
+                    false,
+                );
+                return;
+            }
+
+            match server_clone
+                .plugin_manager
+                .try_load_plugin(&server_clone, &path)
+                .await
+            {
+                Ok(()) => source_clone.send_feedback(
+                    TextComponent::text(format!("Plugin {plugin_name} reloaded successfully"))
+                        .color_named(NamedColor::Green),
+                    true,
+                ),
+                // The plugin is unloaded at this point, so say so rather than implying it is back.
+                Err(e) => source_clone.send_feedback(
+                    TextComponent::text(format!(
+                        "Plugin {plugin_name} was unloaded but could not be loaded again: {e}"
+                    ))
+                    .color_named(NamedColor::Red),
+                    false,
+                ),
+            }
+        });
+
+        Ok(1)
+    }
+}
+
 struct HotReloadExecutor(bool);
 
 impl CommandExecutor for HotReloadExecutor {
@@ -228,6 +282,11 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
             .then(
                 literal("unload").then(
                     argument("plugin", StringArgumentType::SingleWord).executes(UnloadExecutor),
+                ),
+            )
+            .then(
+                literal("reload").then(
+                    argument("plugin", StringArgumentType::SingleWord).executes(ReloadExecutor),
                 ),
             )
             .then(

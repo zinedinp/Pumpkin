@@ -11,7 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use pumpkin_config::gui::GuiConfig;
 use pumpkin_gui_api::{
-    GuiMessage, LogRing, ServerMessage, ThemePreference, read_message, write_message,
+    GuiMessage, LogRing, PROTOCOL_VERSION, ServerMessage, ServerMeta, ThemePreference,
+    read_message, write_message,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
@@ -19,6 +20,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::command::CommandSender;
 use crate::plugin::server::server_command::ServerCommandEvent;
 use crate::server::Server;
+use crate::STOP_INTERRUPT;
 
 /// Fans `Snapshot`/`LogLines`/`ShuttingDown` out to every connected GUI.
 pub type Broadcaster = broadcast::Sender<ServerMessage>;
@@ -40,6 +42,32 @@ pub fn notify_shutdown() {
     }
 }
 
+/// Everything a connection needs that does not come from the socket itself.
+struct Listener {
+    server: Arc<Server>,
+    ring: Arc<LogRing>,
+    tx: Broadcaster,
+    theme: ThemePreference,
+    meta: ServerMeta,
+}
+
+impl Listener {
+    /// Wires one accepted stream up to its own reader and writer tasks.
+    fn serve<S>(self: &Arc<Self>, stream: S)
+    where
+        S: AsyncRead + AsyncWrite + Send + 'static,
+    {
+        let (read_half, write_half) = tokio::io::split(stream);
+        let rx = self.tx.subscribe();
+        self.server.clone().spawn_task(handle_connection(
+            self.clone(),
+            read_half,
+            write_half,
+            rx,
+        ));
+    }
+}
+
 /// Binds the listener and spawns its accept loop on the server's runtime. Returns the endpoint
 /// string to hand to a spawned `pumpkin-gui` process (or to print for a manual `--attach`).
 pub fn spawn_listener(
@@ -49,47 +77,49 @@ pub fn spawn_listener(
 ) -> std::io::Result<(String, Broadcaster)> {
     let (tx, _rx) = broadcast::channel(64);
     let _ = BROADCAST.set(tx.clone());
-    let theme = ThemePreference::from_config(&config.theme);
+
+    let listener = Arc::new(Listener {
+        theme: ThemePreference::from_config(&config.theme),
+        meta: super::sampler::server_meta(&server),
+        server,
+        ring,
+        tx: tx.clone(),
+    });
 
     // Set when `pumpkin-gui` spawned this process itself -> otherwise pick a fresh endpoint.
     let requested = std::env::var(pumpkin_gui_api::GUI_ENDPOINT_ENV).ok();
-    let endpoint = bind_and_serve(server, ring, tx.clone(), theme, requested)?;
+    let endpoint = bind_and_serve(listener, requested)?;
     // Only after a successful bind, a failed one must fall back to the console, not strand the
     // server with neither a listener nor a console reader.
     ATTACHED.store(true, Ordering::Release);
     Ok((endpoint, tx))
 }
 
+#[cfg(not(any(unix, windows)))]
+compile_error!(
+    "the GUI listener needs a Unix domain socket or a Windows named pipe; build without the `gui` \
+     feature on other targets"
+);
+
 #[cfg(unix)]
-fn bind_and_serve(
-    server: Arc<Server>,
-    ring: Arc<LogRing>,
-    tx: Broadcaster,
-    theme: ThemePreference,
-    requested: Option<String>,
-) -> std::io::Result<String> {
+fn bind_and_serve(listener: Arc<Listener>, requested: Option<String>) -> std::io::Result<String> {
     let path = std::path::PathBuf::from(requested.unwrap_or_else(pumpkin_gui_api::unique_endpoint));
     let _ = std::fs::remove_file(&path);
-    let listener = tokio::net::UnixListener::bind(&path)?;
+    let socket = tokio::net::UnixListener::bind(&path)?;
     let endpoint = path.to_string_lossy().into_owned();
 
-    server.clone().spawn_task(async move {
+    listener.server.clone().spawn_task(async move {
         loop {
-            let Ok((stream, _addr)) = listener.accept().await else {
+            // These tasks live on the server's tracker, which `Server::shutdown` waits on, so an
+            // uncancelled `accept()` would block the save forever.
+            let accepted = tokio::select! {
+                accepted = socket.accept() => accepted,
+                () = STOP_INTERRUPT.cancelled() => break,
+            };
+            let Ok((stream, _addr)) = accepted else {
                 break;
             };
-            let (read_half, write_half) = tokio::io::split(stream);
-            let meta = super::sampler::server_meta(&server);
-            let rx = tx.subscribe();
-            server.clone().spawn_task(handle_connection(
-                server.clone(),
-                ring.clone(),
-                read_half,
-                write_half,
-                rx,
-                meta,
-                theme,
-            ));
+            listener.serve(stream);
         }
         let _ = std::fs::remove_file(&path);
     });
@@ -98,13 +128,7 @@ fn bind_and_serve(
 }
 
 #[cfg(windows)]
-fn bind_and_serve(
-    server: Arc<Server>,
-    ring: Arc<LogRing>,
-    tx: Broadcaster,
-    theme: ThemePreference,
-    requested: Option<String>,
-) -> std::io::Result<String> {
+fn bind_and_serve(listener: Arc<Listener>, requested: Option<String>) -> std::io::Result<String> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let name = requested.unwrap_or_else(pumpkin_gui_api::unique_endpoint);
@@ -113,29 +137,23 @@ fn bind_and_serve(
         .create(&name)?;
     let endpoint = name.clone();
 
-    server.clone().spawn_task(async move {
+    listener.server.clone().spawn_task(async move {
         loop {
-            if pipe.connect().await.is_err() {
+            // Cancelled for the same reason as the Unix arm: `Server::shutdown` waits on this
+            // task's tracker.
+            let connected = tokio::select! {
+                connected = pipe.connect() => connected,
+                () = STOP_INTERRUPT.cancelled() => break,
+            };
+            if connected.is_err() {
                 break;
             }
+            // A pipe instance serves one client, so the next has to exist before this is handed off.
             let next = match ServerOptions::new().create(&name) {
                 Ok(next) => next,
                 Err(_) => break,
             };
-            let connected = std::mem::replace(&mut pipe, next);
-
-            let (read_half, write_half) = tokio::io::split(connected);
-            let meta = super::sampler::server_meta(&server);
-            let rx = tx.subscribe();
-            server.clone().spawn_task(handle_connection(
-                server.clone(),
-                ring.clone(),
-                read_half,
-                write_half,
-                rx,
-                meta,
-                theme,
-            ));
+            listener.serve(std::mem::replace(&mut pipe, next));
         }
     });
 
@@ -143,26 +161,28 @@ fn bind_and_serve(
 }
 
 async fn handle_connection<R, W>(
-    server: Arc<Server>,
-    ring: Arc<LogRing>,
+    ctx: Arc<Listener>,
     mut read_half: R,
     write_half: W,
     broadcast_rx: broadcast::Receiver<ServerMessage>,
-    meta: pumpkin_gui_api::ServerMeta,
-    theme: ThemePreference,
 ) where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
+    let server = &ctx.server;
     let (out_tx, out_rx) = mpsc::unbounded_channel::<ServerMessage>();
 
     // Queued before the forwarder can push anything
-    let _ = out_tx.send(ServerMessage::Hello { meta, theme });
+    let _ = out_tx.send(ServerMessage::Hello {
+        protocol: PROTOCOL_VERSION,
+        meta: ctx.meta.clone(),
+        theme: ctx.theme,
+    });
 
     // The broadcast only reaches GUIs that were already subscribed, and `send` drops the message
     // outright when there are none, so every line logged before this connection existed.
     let mut backlog = Vec::new();
-    let from_seq = ring.drain_since(0, &mut backlog);
+    let from_seq = ctx.ring.drain_since(0, &mut backlog);
     if !backlog.is_empty() {
         let _ = out_tx.send(ServerMessage::LogLines(backlog));
     }
@@ -173,13 +193,20 @@ async fn handle_connection<R, W>(
         .spawn_task(forward_loop(broadcast_rx, out_tx.clone(), from_seq));
 
     loop {
-        match read_message::<_, GuiMessage>(&mut read_half).await {
-            Ok(GuiMessage::Submit(line)) => submit(&server, line),
+        // A connected GUI is idle most of the time, so without the cancel arm this read would
+        // outlive the shutdown and stall `Server::shutdown`.
+        let message = tokio::select! {
+            message = read_message::<_, GuiMessage>(&mut read_half) => message,
+            () = STOP_INTERRUPT.cancelled() => break,
+        };
+
+        match message {
+            Ok(GuiMessage::Submit(line)) => submit(server, line),
             Ok(GuiMessage::Complete { id, line, cursor }) => {
-                let candidates = crate::logging::console_completions(&server, &line, cursor);
+                let candidates = crate::logging::console_completions(server, &line, cursor);
                 let _ = out_tx.send(ServerMessage::Completions { id, candidates });
             }
-            Ok(GuiMessage::RequestStop) => submit(&server, "stop".to_owned()),
+            Ok(GuiMessage::RequestStop) => submit(server, "stop".to_owned()),
             Err(_) => break,
         }
     }
@@ -189,9 +216,23 @@ async fn writer_loop<W: AsyncWrite + Unpin>(
     mut write_half: W,
     mut rx: mpsc::UnboundedReceiver<ServerMessage>,
 ) {
-    while let Some(msg) = rx.recv().await {
+    loop {
+        let msg = tokio::select! {
+            msg = rx.recv() => msg,
+            () = STOP_INTERRUPT.cancelled() => break,
+        };
+        let Some(msg) = msg else { break };
+
         if write_message(&mut write_half, &msg).await.is_err() {
-            break;
+            return;
+        }
+    }
+
+    // On the way out, flush what is already queued so the GUI still receives `ShuttingDown`
+    // instead of just seeing the socket close.
+    while let Ok(msg) = rx.try_recv() {
+        if write_message(&mut write_half, &msg).await.is_err() {
+            return;
         }
     }
 }
@@ -204,7 +245,14 @@ async fn forward_loop(
     from_seq: u64,
 ) {
     loop {
-        match rx.recv().await {
+        // The `BROADCAST` static holds a sender for the life of the process, so this receiver
+        // never sees `Closed` on its own and has to be cancelled explicitly.
+        let received = tokio::select! {
+            received = rx.recv() => received,
+            () = STOP_INTERRUPT.cancelled() => break,
+        };
+
+        match received {
             Ok(ServerMessage::LogLines(lines)) => {
                 let lines: Vec<_> = lines
                     .into_iter()

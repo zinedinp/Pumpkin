@@ -14,11 +14,15 @@ pub type RequestId = u32;
 /// the endpoint (a bare Unix socket path or Windows named-pipe name) to connect to.
 pub const GUI_ENDPOINT_ENV: &str = "PUMPKIN_GUI_ENDPOINT";
 
+/// Bumped whenever the meaning or ordering of a message changes.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// Sent from the server to a connected GUI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerMessage {
     /// Sent once, immediately after a connection is accepted.
     Hello {
+        protocol: u32,
         meta: ServerMeta,
         theme: ThemePreference,
     },
@@ -72,6 +76,10 @@ where
 {
     let bytes = postcard::to_allocvec(msg)?;
     let len = u32::try_from(bytes.len()).map_err(|_| WireError::TooLarge(u32::MAX))?;
+    // Refuse here rather than emitting a frame our own reader would reject as corrupt.
+    if len > MAX_MESSAGE_LEN {
+        return Err(WireError::TooLarge(len));
+    }
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&bytes).await?;
     writer.flush().await?;
