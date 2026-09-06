@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use pumpkin_config::gui::GuiConfig;
-use pumpkin_gui::{GuiCommands, GuiSide, LogLevel, ThemePreference};
+use pumpkin_gui_api::{GuiCommands, GuiSide, LogLevel, ThemePreference};
 
 use crate::command::{self, CommandSender};
 use crate::plugin::server::server_command::ServerCommandEvent;

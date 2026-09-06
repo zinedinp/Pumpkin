@@ -4,16 +4,12 @@
 //! [`Snapshot`] and hands over a [`GuiCommands`] sink, and the window only reads them. That keeps
 //! the dependency one-directional (`pumpkin` -> `pumpkin-gui`)
 
-mod ansi;
-mod model;
 mod qobjects;
-mod system;
 
-pub use model::{
-    GuiCommands, GuiSide, LogLevel, LogLine, LogRing, PlayerRow, ServerMeta, Snapshot,
-    ThemePreference, WorldRow,
+pub use pumpkin_gui_api::{
+    DiskSpace, GuiCommands, GuiSide, LogLevel, LogLine, LogRing, PlayerRow, ServerMeta, Snapshot,
+    SystemSampler, SystemStats, ThemePreference, WorldRow, directory_size,
 };
-pub use system::{DiskSpace, SystemSampler, SystemStats, directory_size};
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};

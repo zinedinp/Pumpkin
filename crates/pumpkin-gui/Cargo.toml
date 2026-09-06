@@ -7,12 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-arc-swap.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_gui", "qt_qml"] }
+pumpkin-gui-api = { path = "../pumpkin-gui-api" }
 rfd = "0.17.2"
-sysinfo = { workspace = true, features = ["system", "disk", "component"] }
 
 [build-dependencies]
 cxx-qt-build.workspace = true

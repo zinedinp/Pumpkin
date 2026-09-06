@@ -34,7 +34,7 @@ use pumpkin::{
 };
 use pumpkin::{PumpkinServer, stop_server};
 #[cfg(feature = "gui")]
-use pumpkin_gui::GuiSide;
+use pumpkin_gui_api::GuiSide;
 
 mod cli;
 

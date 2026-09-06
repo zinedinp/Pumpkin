@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use arc_swap::ArcSwap;
 use pumpkin_config::gui::GuiConfig;
-use pumpkin_gui::{GuiSide, PlayerRow, ServerMeta, Snapshot, SystemSampler, WorldRow};
+use pumpkin_gui_api::{GuiSide, PlayerRow, ServerMeta, Snapshot, SystemSampler, WorldRow};
 
 use crate::net::ClientPlatform;
 use crate::server::Server;
@@ -27,9 +27,9 @@ struct WorldScan {
 
 impl WorldScan {
     fn dimension_size(&self) -> u64 {
-        pumpkin_gui::directory_size(&self.region)
-            + pumpkin_gui::directory_size(&self.entities)
-            + pumpkin_gui::directory_size(&self.poi)
+        pumpkin_gui_api::directory_size(&self.region)
+            + pumpkin_gui_api::directory_size(&self.entities)
+            + pumpkin_gui_api::directory_size(&self.poi)
     }
 }
 
@@ -165,7 +165,7 @@ fn spawn_disk_scanner(server: &Arc<Server>, disk: &Arc<ArcSwap<DiskUsage>>, scan
                 roots.dedup();
                 let worlds_size = roots
                     .iter()
-                    .map(|root| pumpkin_gui::directory_size(root))
+                    .map(|root| pumpkin_gui_api::directory_size(root))
                     .sum();
 
                 DiskUsage {
