@@ -11,6 +11,8 @@ compile_error!("Compiling for WASI targets is not supported!");
 
 use pumpkin_data::packet::CURRENT_MC_VERSION;
 use pumpkin_world::{CURRENT_BEDROCK_MC_PROTOCOL, CURRENT_BEDROCK_MC_VERSION};
+#[cfg(feature = "gui")]
+use std::io::IsTerminal;
 use std::{
     backtrace::{Backtrace, BacktraceStatus},
     io::{self},
@@ -19,8 +21,6 @@ use std::{
     sync::{OnceLock, atomic::Ordering},
     thread::{self, ThreadId},
 };
-#[cfg(feature = "gui")]
-use std::io::IsTerminal;
 #[cfg(not(unix))]
 use tokio::signal::ctrl_c;
 #[cfg(unix)]
