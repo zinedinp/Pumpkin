@@ -333,14 +333,16 @@ impl<P: LightProvider> LightPropagator<P> {
                 if new_level <= stored {
                     return None;
                 }
-                set_light_in(
+                if !set_light_in(
                     P::proto_sections_mut(c),
                     cell.section_idx,
                     cell.local_x,
                     cell.local_y,
                     cell.local_z,
                     new_level,
-                );
+                ) {
+                    return None;
+                }
                 Some(new_level)
             }
             Chunk::Level(lvl) => {
@@ -370,14 +372,16 @@ impl<P: LightProvider> LightPropagator<P> {
                 if new_level <= stored {
                     return None;
                 }
-                set_light_in(
+                if !set_light_in(
                     P::level_sections_mut(&mut light),
                     cell.section_idx,
                     cell.local_x,
                     cell.local_y,
                     cell.local_z,
                     new_level,
-                );
+                ) {
+                    return None;
+                }
                 drop(light);
                 lvl.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                 Some(new_level)
