@@ -83,9 +83,9 @@ fn main() {
         }
     };
 
-    // if the launcher isn't a tty, it is treated the same as `--gui`
+    // if the launcher isn't a tty, it is treated the same as `--gui`; `--nogui` overrides both
     #[cfg(feature = "gui")]
-    if args.gui || !io::stdin().is_terminal() {
+    if !args.nogui && (args.gui || !io::stdin().is_terminal()) {
         // `colored` (behind `to_pretty_console()`) auto-disables ANSI codes when stdout isn't a
         // tty
         colored::control::set_override(true);
@@ -190,12 +190,7 @@ async fn server_main(config: PumpkinConfig, gui: MaybeGui) {
     if let Some(ring) = gui_log_ring.as_ref() {
         match pumpkin::gui::attach(&pumpkin_server.server, ring, &gui_config) {
             Ok(endpoint) => {
-                if let Err(err) = pumpkin::gui::spawn_gui_process(&endpoint) {
-                    warn!(
-                        "Could not launch pumpkin-gui ({err}); continuing headless. Run \
-                         `pumpkin-gui --connect {endpoint}` manually if needed."
-                    );
-                }
+                info!("GUI listener ready at {endpoint}; run `pumpkin-gui --attach {endpoint}`.");
             }
             Err(err) => warn!("Could not start the GUI IPC listener: {err}"),
         }

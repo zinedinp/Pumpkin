@@ -2,8 +2,9 @@
 //!
 //! The server listens (Unix domain socket / Windows named pipe); `pumpkin-gui` connects as a
 //! client. This keeps the two processes properly decoupled: the GUI can crash or be closed
-//! without taking the server down, and a fresh `pumpkin-gui --connect <endpoint>` can reattach
-//! later.
+//! without taking the server down, and a fresh `pumpkin-gui --attach <endpoint>` can reattach
+//! later. When `pumpkin-gui` spawns this server itself, it picks the endpoint and passes it via
+//! [`pumpkin_gui_api::GUI_ENDPOINT_ENV`].
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -37,12 +38,8 @@ pub fn notify_shutdown() {
     }
 }
 
-fn endpoint_path() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("pumpkin-gui-{}.sock", std::process::id()))
-}
-
 /// Binds the listener and spawns its accept loop on the server's runtime. Returns the endpoint
-/// string to hand to a spawned `pumpkin-gui` process (or to print for a manual `--connect`).
+/// string to hand to a spawned `pumpkin-gui` process (or to print for a manual `--attach`).
 pub fn spawn_listener(
     server: Arc<Server>,
     config: &GuiConfig,
@@ -53,7 +50,9 @@ pub fn spawn_listener(
     let _ = BROADCAST.set(tx.clone());
     let theme = ThemePreference::from_config(&config.theme);
 
-    let endpoint = bind_and_serve(server, tx.clone(), theme)?;
+    // Set when `pumpkin-gui` spawned this process itself -> otherwise pick a fresh endpoint.
+    let requested = std::env::var(pumpkin_gui_api::GUI_ENDPOINT_ENV).ok();
+    let endpoint = bind_and_serve(server, tx.clone(), theme, requested)?;
     Ok((endpoint, tx))
 }
 
@@ -62,8 +61,9 @@ fn bind_and_serve(
     server: Arc<Server>,
     tx: Broadcaster,
     theme: ThemePreference,
+    requested: Option<String>,
 ) -> std::io::Result<String> {
-    let path = endpoint_path();
+    let path = std::path::PathBuf::from(requested.unwrap_or_else(pumpkin_gui_api::unique_endpoint));
     let _ = std::fs::remove_file(&path);
     let listener = tokio::net::UnixListener::bind(&path)?;
     let endpoint = path.to_string_lossy().into_owned();
@@ -96,10 +96,11 @@ fn bind_and_serve(
     server: Arc<Server>,
     tx: Broadcaster,
     theme: ThemePreference,
+    requested: Option<String>,
 ) -> std::io::Result<String> {
     use tokio::net::windows::named_pipe::ServerOptions;
 
-    let name = format!(r"\\.\pipe\pumpkin-gui-{}", std::process::id());
+    let name = requested.unwrap_or_else(pumpkin_gui_api::unique_endpoint);
     let mut pipe = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&name)?;

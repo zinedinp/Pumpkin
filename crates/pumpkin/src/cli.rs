@@ -10,11 +10,15 @@ pub enum Action {
 
 #[derive(Default)]
 pub struct Args {
-    /// Open the monitoring window alongside the server.
+    /// Opens the local IPC listener and hands the TTY console off, for a `pumpkin-gui` process to
+    /// spawn this or attach to it.
     ///
     /// Only meaningful in a build with the `gui` feature; otherwise the flag is rejected with a
     /// message saying so, rather than being silently ignored.
     pub gui: bool,
+    /// Forces plain TTY-console behaviour, overriding both `--gui` and the non-tty auto-detect
+    /// heuristic.
+    pub nogui: bool,
 }
 
 const HELP: &str = "\
@@ -23,7 +27,8 @@ Pumpkin - a Minecraft server in Rust.
 Usage: pumpkin [OPTIONS]
 
 Options:
-      --gui      Open the monitoring and console window alongside the server
+      --gui      Open the local IPC listener for a pumpkin-gui process, instead of the console
+      --nogui    Force plain console behaviour, overriding --gui and the non-tty auto-detect
   -h, --help     Print this help
   -V, --version  Print version information
 
@@ -40,6 +45,9 @@ Rebuild with the feature enabled:
 It is off by default because it links against Qt6, which would otherwise be
 required to start the server at all.";
 
+const GUI_AND_NOGUI: &str = "\
+error: --gui and --nogui are opposites and cannot be used together.";
+
 /// Parses process arguments.
 pub fn parse<I, S>(args: I) -> Action
 where
@@ -51,6 +59,7 @@ where
     for arg in args {
         match arg.as_ref() {
             "--gui" => parsed.gui = true,
+            "--nogui" => parsed.nogui = true,
             "-h" | "--help" => {
                 return Action::Exit {
                     message: HELP.to_owned(),
@@ -74,9 +83,16 @@ where
         }
     }
 
-    if parsed.gui && !cfg!(feature = "gui") {
+    if (parsed.gui || parsed.nogui) && !cfg!(feature = "gui") {
         return Action::Exit {
             message: GUI_NOT_COMPILED.to_owned(),
+            code: 2,
+        };
+    }
+
+    if parsed.gui && parsed.nogui {
+        return Action::Exit {
+            message: GUI_AND_NOGUI.to_owned(),
             code: 2,
         };
     }

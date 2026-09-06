@@ -1,9 +1,13 @@
 //! Bridges the running server to the optional GUI process over a local IPC socket.
+//!
+//! The server never spawns `pumpkin-gui` itself: that binary is the entry point users start, and
+//! it is responsible for finding or spawning a server to talk to. `--gui` here only opens the
+//! listener and hands the TTY console reader off, for a `pumpkin-gui` that spawned this process
+//! (via [`pumpkin_gui_api::GUI_ENDPOINT_ENV`]) or one attaching to it later.
 
 mod ipc;
 mod log_layer;
 mod sampler;
-mod spawn_process;
 
 use std::sync::Arc;
 
@@ -42,12 +46,4 @@ pub fn attach(
 
     sampler::spawn(server, ring, &broadcaster, config);
     Ok(endpoint)
-}
-
-/// Launches `pumpkin-gui` connected to `endpoint`.
-///
-/// Failure is not fatal to the server: the listener and samplers above keep running headless, and
-/// a manually-started `pumpkin-gui --connect <endpoint>` can attach later.
-pub fn spawn_gui_process(endpoint: &str) -> std::io::Result<std::process::Child> {
-    spawn_process::spawn(endpoint)
 }
