@@ -58,10 +58,10 @@ pub struct LogLine {
     pub target: String,
     /// Human-readable text with ANSI/OSC 8 escapes stripped, for search, copy and save.
     pub message: String,
-    /// The same line as an HTML fragment: real colours/attributes from the original ANSI escapes,
-    /// hyperlinks (explicit OSC 8 click events and bare URLs) as `<a href>`. Computed once here
-    /// rather than per draw, since each line is only ever rendered a handful of times.
-    pub html: String,
+    /// The same line split into styled runs: real colours/attributes from the original ANSI
+    /// escapes, plus hyperlink targets (explicit OSC 8 and bare URLs). Parsed once here rather
+    /// than per draw, and concatenating their `text` reproduces `message`.
+    pub runs: Vec<crate::ansi::StyledRun>,
 }
 
 struct LogRingInner {
@@ -89,8 +89,8 @@ impl LogRing {
     }
 
     /// `message` may carry raw ANSI SGR colour codes and OSC 8 hyperlinks exactly as printed to
-    /// the terminal; they are parsed once here into a plain string and an HTML fragment rather
-    /// than on every draw.
+    /// the terminal; they are parsed once here into a plain string and styled runs rather than on
+    /// every draw.
     pub fn push(&self, level: LogLevel, target: String, message: &str) {
         let rendered = crate::ansi::render(message);
 
@@ -106,7 +106,7 @@ impl LogRing {
             level,
             target,
             message: rendered.plain,
-            html: rendered.html,
+            runs: rendered.runs,
         });
 
         inner.trim(self.capacity);

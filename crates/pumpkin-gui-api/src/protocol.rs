@@ -15,6 +15,7 @@ pub type RequestId = u32;
 pub const GUI_ENDPOINT_ENV: &str = "PUMPKIN_GUI_ENDPOINT";
 
 /// Bumped whenever the meaning or ordering of a message changes.
+// Stays at 1 while the iced port is in flight; both sides are rebuilt together until then.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Sent from the server to a connected GUI.

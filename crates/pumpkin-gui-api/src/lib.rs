@@ -9,7 +9,7 @@ mod protocol;
 mod system;
 mod version;
 
-pub use ansi::DEFAULT_LINK_COLOR;
+pub use ansi::StyledRun;
 pub use endpoint::unique_endpoint;
 pub use model::{
     ConfigFile, DiskSpace, LogLevel, LogLine, LogRing, PlayerRow, PluginKind, PluginPermission,

@@ -1,12 +1,29 @@
-//! Turns ANSI-formatted console text into what the window needs to show it: an HTML fragment
+//! Turns ANSI-formatted console text into what a window needs to show it: a list of styled runs
 //! carrying the real colours/attributes/hyperlinks, and a plain string for search, copy and save.
 
-use std::fmt::Write as _;
+use serde::{Deserialize, Serialize};
+
+/// One stretch of a log line that shares a single appearance.
+///
+/// Deliberately toolkit-neutral: colours are plain RGB, and a run with no colour of its own is
+/// drawn in whatever the frontend uses for that log level.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StyledRun {
+    pub text: String,
+    /// `None` when the run carries no ANSI colour of its own.
+    pub color: Option<(u8, u8, u8)>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strike: bool,
+    /// Hyperlink target, from an OSC 8 sequence or a bare URL. Empty when the run is not a link.
+    pub link: String,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RenderedLine {
     pub plain: String,
-    pub html: String,
+    pub runs: Vec<StyledRun>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -19,21 +36,17 @@ struct Style {
 }
 
 impl Style {
-    fn push_css(self, out: &mut String) {
-        if let Some((r, g, b)) = self.fg {
-            let _ = write!(out, "color:#{r:02x}{g:02x}{b:02x};");
-        }
-        if self.bold {
-            out.push_str("font-weight:bold;");
-        }
-        if self.italic {
-            out.push_str("font-style:italic;");
-        }
-        match (self.underline, self.strike) {
-            (true, true) => out.push_str("text-decoration:underline line-through;"),
-            (true, false) => out.push_str("text-decoration:underline;"),
-            (false, true) => out.push_str("text-decoration:line-through;"),
-            (false, false) => {}
+    /// A run carrying this style, with `text` and `link` filled in by the caller.
+    fn run(self, text: &str, link: &str) -> StyledRun {
+        StyledRun {
+            text: text.to_owned(),
+            color: self.fg,
+            bold: self.bold,
+            italic: self.italic,
+            // A link is underlined on top of whatever the surrounding text does.
+            underline: self.underline || !link.is_empty(),
+            strike: self.strike,
+            link: link.to_owned(),
         }
     }
 }
@@ -103,18 +116,6 @@ fn apply_sgr(style: &mut Style, raw: &str) {
     }
 }
 
-fn push_escaped(text: &str, out: &mut String) {
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            _ => out.push(c),
-        }
-    }
-}
-
 /// Finds the next bare `http(s)://` URL in `text`, trimming trailing punctuation that reads more
 /// like the end of a sentence than part of the link
 fn next_url(text: &str) -> Option<(usize, usize)> {
@@ -140,73 +141,40 @@ fn next_url(text: &str) -> Option<(usize, usize)> {
     (end > 0).then_some((start, start + end))
 }
 
-/// Placeholder colour for a link with no ANSI colour of its own.
-///
-/// A frontend substitutes its own theme colour for this token.
-pub const DEFAULT_LINK_COLOR: &str = "@default-link-color@";
-
-/// Emits a link, always with an explicit colour: `color` if this run had an ANSI one, otherwise
-/// [`DEFAULT_LINK_COLOR`]. Underline is the only attribute a link adds over the surrounding text.
-fn push_link(url: &str, label: &str, color: Option<(u8, u8, u8)>, out: &mut String) {
-    out.push_str("<a href=\"");
-    push_escaped(url, out);
-    out.push_str("\" style=\"text-decoration:underline;color:");
-    match color {
-        Some((r, g, b)) => {
-            let _ = write!(out, "#{r:02x}{g:02x}{b:02x}");
-        }
-        None => out.push_str(DEFAULT_LINK_COLOR),
-    }
-    out.push_str(";\">");
-    push_escaped(label, out);
-    out.push_str("</a>");
-}
-
-/// Escapes `text` and wraps any bare URLs it contains in `<a href>`, coloured like the rest of
-/// `color`'s run.
-fn linkify(text: &str, color: Option<(u8, u8, u8)>, out: &mut String) {
+/// Splits `text` on the bare URLs it contains, so each one becomes its own link run.
+fn push_linkified(out: &mut Vec<StyledRun>, text: &str, style: Style) {
     let mut rest = text;
     while let Some((start, end)) = next_url(rest) {
-        push_escaped(&rest[..start], out);
-        push_link(&rest[start..end], &rest[start..end], color, out);
+        if start > 0 {
+            out.push(style.run(&rest[..start], ""));
+        }
+        let url = &rest[start..end];
+        out.push(style.run(url, url));
         rest = &rest[end..];
     }
-    push_escaped(rest, out);
+    if !rest.is_empty() {
+        out.push(style.run(rest, ""));
+    }
 }
 
-/// Emits one run of text as HTML: a `<span>` only if some style is actually active, and either an
-/// explicit OSC 8 link or auto-linkified bare URLs.
-fn flush_run(html: &mut String, run: &str, style: Style, link: Option<&str>) {
+/// Emits one run of text: an explicit OSC 8 link stays whole, anything else is split on bare URLs.
+fn flush_run(out: &mut Vec<StyledRun>, run: &str, style: Style, link: Option<&str>) {
     if run.is_empty() {
         return;
     }
 
-    let mut css = String::new();
-    style.push_css(&mut css);
-    let wrap = !css.is_empty();
-
-    if wrap {
-        html.push_str("<span style=\"");
-        html.push_str(&css);
-        html.push_str("\">");
-    }
-
     match link {
-        Some(url) => push_link(url, run, style.fg, html),
-        None => linkify(run, style.fg, html),
-    }
-
-    if wrap {
-        html.push_str("</span>");
+        Some(url) => out.push(style.run(run, url)),
+        None => push_linkified(out, run, style),
     }
 }
 
-/// Parses `text`'s SGR colour/attribute codes and OSC 8 hyperlinks into an HTML fragment, and
+/// Parses `text`'s SGR colour/attribute codes and OSC 8 hyperlinks into styled runs, and
 /// separately strips all of it down to what a human would read.
 #[must_use]
 pub fn render(text: &str) -> RenderedLine {
     let mut plain = String::with_capacity(text.len());
-    let mut html = String::with_capacity(text.len());
+    let mut runs = Vec::new();
 
     let mut style = Style::default();
     let mut link: Option<String> = None;
@@ -216,7 +184,7 @@ pub fn render(text: &str) -> RenderedLine {
     while let Some(c) = chars.next() {
         if c != '\u{1b}' {
             // A stray carriage return (Windows-style line endings smuggled into a message) would
-            // otherwise show up as a gibberish in the rich-text view.
+            // otherwise show up as gibberish in the log view.
             if c != '\r' {
                 run.push(c);
                 plain.push(c);
@@ -234,7 +202,7 @@ pub fn render(text: &str) -> RenderedLine {
                     }
                     params.push(next);
                 }
-                flush_run(&mut html, &run, style, link.as_deref());
+                flush_run(&mut runs, &run, style, link.as_deref());
                 run.clear();
                 apply_sgr(&mut style, &params);
             }
@@ -255,7 +223,7 @@ pub fn render(text: &str) -> RenderedLine {
                 // Pumpkin only ever emits `8;;<url>` (open) and `8;;` (close).
                 if let Some(rest) = payload.strip_prefix("8;") {
                     let url = rest.split_once(';').map_or(rest, |(_, uri)| uri);
-                    flush_run(&mut html, &run, style, link.as_deref());
+                    flush_run(&mut runs, &run, style, link.as_deref());
                     run.clear();
                     link = (!url.is_empty()).then(|| url.to_owned());
                 }
@@ -266,6 +234,6 @@ pub fn render(text: &str) -> RenderedLine {
         }
     }
 
-    flush_run(&mut html, &run, style, link.as_deref());
-    RenderedLine { plain, html }
+    flush_run(&mut runs, &run, style, link.as_deref());
+    RenderedLine { plain, runs }
 }
