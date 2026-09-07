@@ -17,10 +17,10 @@ use pumpkin_gui_api::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};
 
+use crate::STOP_INTERRUPT;
 use crate::command::CommandSender;
 use crate::plugin::server::server_command::ServerCommandEvent;
 use crate::server::Server;
-use crate::STOP_INTERRUPT;
 
 /// Fans `Snapshot`/`LogLines`/`ShuttingDown` out to every connected GUI.
 pub type Broadcaster = broadcast::Sender<ServerMessage>;
@@ -59,12 +59,9 @@ impl Listener {
     {
         let (read_half, write_half) = tokio::io::split(stream);
         let rx = self.tx.subscribe();
-        self.server.clone().spawn_task(handle_connection(
-            self.clone(),
-            read_half,
-            write_half,
-            rx,
-        ));
+        self.server
+            .clone()
+            .spawn_task(handle_connection(self.clone(), read_half, write_half, rx));
     }
 }
 
@@ -188,9 +185,8 @@ async fn handle_connection<R, W>(
     }
 
     // Plugin state changes are pushed here rather than sendin with every snapshot
-    let _ = out_tx.send(ServerMessage::Plugins(
-        super::plugins::collect(server).await,
-    ));
+    let (rows, hot_reload) = super::plugins::snapshot(server).await;
+    let _ = out_tx.send(ServerMessage::Plugins { rows, hot_reload });
 
     server.clone().spawn_task(writer_loop(write_half, out_rx));
     server

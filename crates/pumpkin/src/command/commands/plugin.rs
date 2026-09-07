@@ -182,7 +182,11 @@ impl CommandExecutor for ReloadExecutor {
         let source_clone = context.source.clone();
         let server_clone = server_arc.clone();
         server_arc.spawn_task(async move {
-            if let Err(e) = server_clone.plugin_manager.unload_plugin(&plugin_name).await {
+            if let Err(e) = server_clone
+                .plugin_manager
+                .unload_plugin(&plugin_name)
+                .await
+            {
                 source_clone.send_feedback(
                     TextComponent::text(format!("Failed to unload plugin {plugin_name}: {e}"))
                         .color_named(NamedColor::Red),
@@ -275,20 +279,18 @@ pub fn register(dispatcher: &mut CommandDispatcher, registry: &PermissionRegistr
             .requires(PERMISSION)
             .then(literal("list").executes(ListExecutor))
             .then(
+                // Quotable rather than a single word: `load` takes a path, and a plugin name may
+                // contain characters an unquoted argument stops at.
                 literal("load").then(
-                    argument("plugin", StringArgumentType::SingleWord).executes(LoadExecutor),
+                    argument("plugin", StringArgumentType::QuotablePhrase).executes(LoadExecutor),
                 ),
             )
-            .then(
-                literal("unload").then(
-                    argument("plugin", StringArgumentType::SingleWord).executes(UnloadExecutor),
-                ),
-            )
-            .then(
-                literal("reload").then(
-                    argument("plugin", StringArgumentType::SingleWord).executes(ReloadExecutor),
-                ),
-            )
+            .then(literal("unload").then(
+                argument("plugin", StringArgumentType::QuotablePhrase).executes(UnloadExecutor),
+            ))
+            .then(literal("reload").then(
+                argument("plugin", StringArgumentType::QuotablePhrase).executes(ReloadExecutor),
+            ))
             .then(
                 literal("hotreload")
                     .then(literal("enable").executes(HotReloadExecutor(true)))

@@ -69,13 +69,14 @@ fn spawn_plugin_watcher(server: &Arc<Server>, tx: &Broadcaster) {
     let interval = Duration::from_secs(2);
 
     server.clone().spawn_task(async move {
-        let mut last: Option<Vec<PluginRow>> = None;
+        let mut last: Option<(Vec<PluginRow>, bool)> = None;
 
         while !SHOULD_STOP.load(Ordering::Relaxed) {
-            let rows = super::plugins::collect(&server).await;
-            if last.as_ref() != Some(&rows) {
-                let _ = tx.send(ServerMessage::Plugins(rows.clone()));
-                last = Some(rows);
+            let next = super::plugins::snapshot(&server).await;
+            if last.as_ref() != Some(&next) {
+                let (rows, hot_reload) = next.clone();
+                let _ = tx.send(ServerMessage::Plugins { rows, hot_reload });
+                last = Some(next);
             }
 
             if stopping_during(interval).await {

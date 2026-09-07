@@ -233,6 +233,19 @@ pub enum PluginState {
     Loaded,
     /// Carries the error the loader reported.
     Failed(String),
+    /// Installed but not running, unloaded on request, or never taken by a loader.
+    Unloaded,
+}
+
+/// One permission a plugin asks for.
+///
+/// The description is resolved server-side: `get_permission_description` matches prefixes as well
+/// as exact names, so a lookup table on the GUI side could not reproduce it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginPermission {
+    pub name: String,
+    /// Empty when the permission is not one the server knows about.
+    pub description: String,
 }
 
 /// One row of the plugin table.
@@ -243,7 +256,7 @@ pub struct PluginRow {
     pub authors: Vec<String>,
     pub description: String,
     pub dependencies: Vec<String>,
-    pub permissions: Vec<String>,
+    pub permissions: Vec<PluginPermission>,
     pub kind: PluginKind,
     pub state: PluginState,
     pub active: bool,

@@ -12,8 +12,9 @@ mod version;
 pub use ansi::DEFAULT_LINK_COLOR;
 pub use endpoint::unique_endpoint;
 pub use model::{
-    ConfigFile, DiskSpace, LogLevel, LogLine, LogRing, PlayerRow, PluginKind, PluginRow,
-    PluginState, ServerMeta, Snapshot, SystemStats, ThemePreference, TickState, WorldRow,
+    ConfigFile, DiskSpace, LogLevel, LogLine, LogRing, PlayerRow, PluginKind, PluginPermission,
+    PluginRow, PluginState, ServerMeta, Snapshot, SystemStats, ThemePreference, TickState,
+    WorldRow,
 };
 pub use protocol::{
     GUI_ENDPOINT_ENV, GuiMessage, MAX_MESSAGE_LEN, PROTOCOL_VERSION, RequestId, ServerMessage,

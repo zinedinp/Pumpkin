@@ -37,8 +37,12 @@ pub enum ServerMessage {
     },
     /// The server is entering graceful shutdown, the GUI should close its window.
     ShuttingDown,
-    /// The full plugin list; pushed on connect and after any plugin change
-    Plugins(Vec<PluginRow>),
+    /// The full plugin list -> pushed on connect and after any plugin change.
+    /// `hot_reload` rides along because it is global plugin state with no other carrier.
+    Plugins {
+        rows: Vec<PluginRow>,
+        hot_reload: bool,
+    },
     /// One configuration file as it is on disk or why it could not be read.
     Config {
         file: ConfigFile,

@@ -38,6 +38,10 @@ pub const PLUGIN_API_VERSION: u32 = 2;
 
 const PLUGIN_DIR: &str = "./plugins";
 
+/// Says how to grant them, since the console prompt is unreachable while a GUI holds the TTY.
+const PERMISSION_DENIED: &str = "Permission request denied. Approve it on the console with no GUI \
+                                 attached, or pre-allow the permissions in the configuration.";
+
 /// A trait for handling events dynamically.
 ///
 /// This trait allows for handling events of any type that implements the `Event` trait.
@@ -186,6 +190,8 @@ pub struct PluginManager {
     loaders: RwLock<Vec<Arc<dyn PluginLoader>>>,
     handlers: Arc<ArcSwap<HandlerMap>>,
     unloaded_files: RwLock<HashSet<PathBuf>>,
+    /// Plugin files that are present but not running, by path.
+    inactive: RwLock<HashMap<PathBuf, InactivePlugin>>,
     services: Arc<RwLock<HashMap<String, Arc<dyn Payload>>>>,
     // Plugin state tracking
     plugin_states: RwLock<HashMap<String, PluginState>>,
@@ -222,6 +228,19 @@ pub struct PluginEntry {
     pub can_unload: bool,
 }
 
+/// A plugin file that is present but not running stays listed instead of disappearing.
+///
+/// Keyed by file rather than by name: a plugin rejected for its API version never got far enough
+/// to say what it is called, and those are exactly the ones someone goes looking for.
+#[derive(Clone)]
+pub struct InactivePlugin {
+    /// `None` when the plugin failed before it could describe itself.
+    pub metadata: Option<PluginMetadata>,
+    pub path: PathBuf,
+    /// Why it is not running, empty when it was manually unloaded
+    pub reason: String,
+}
+
 /// Error types for plugin management
 #[derive(Error, Debug)]
 pub enum ManagerError {
@@ -253,6 +272,7 @@ impl PluginManager {
             ]),
             handlers: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             unloaded_files: RwLock::new(HashSet::new()),
+            inactive: RwLock::new(HashMap::new()),
             services: Arc::new(RwLock::new(HashMap::new())),
             plugin_states: RwLock::new(HashMap::new()),
             state_notify: Arc::new(Notify::new()),
@@ -530,24 +550,29 @@ impl PluginManager {
             None
         };
 
-        let result = if let Some((_, ref mut rl)) = rl_taken {
-            rl.readline(&prompt).is_ok_and(|line| {
-                let input = line.trim().to_lowercase();
-                input == "y" || input == "yes"
-            })
+        let answer = if let Some((_, ref mut rl)) = rl_taken {
+            rl.readline(&prompt).ok()
         } else {
             warn!(
                 "Console readline is not available; cannot prompt for plugin \"{}\" permissions",
                 metadata.name
             );
-            false
+            None
         };
 
         if let Some((wrapper, rl)) = rl_taken {
             wrapper.return_readline(rl);
         }
 
-        (result, start_time.elapsed(), true)
+        // Not being able to ask is not the same as being told no. Caching it would deny the
+        // plugin forever, including on the next start with a console -- which is what happens
+        // when a GUI takes the TTY, so the plugin can never be approved again.
+        let Some(answer) = answer else {
+            return (false, start_time.elapsed(), false);
+        };
+
+        let input = answer.trim().to_lowercase();
+        (input == "y" || input == "yes", start_time.elapsed(), true)
     }
 
     /// Spawn initialization for a single plugin
@@ -574,6 +599,9 @@ impl PluginManager {
             Arc::clone(self),
             Arc::clone(&LOGGER_IMPL),
         ));
+
+        let failed_path = path.clone();
+        let loaded_path = path.clone();
 
         // Create the plugin structure first
         let plugin = LoadedPlugin {
@@ -621,6 +649,7 @@ impl PluginManager {
                         .write()
                         .await
                         .insert(plugin_name.clone(), PluginState::Loaded);
+                    self_ref_clone.inactive.write().await.remove(&loaded_path);
                     state_notify.notify_waiters();
 
                     info!("Loaded {} ({})", metadata.name, metadata.version);
@@ -669,6 +698,10 @@ impl PluginManager {
                         .write()
                         .await
                         .insert(plugin_name.clone(), PluginState::Failed(error_msg.clone()));
+                    // With the error and the path, so it stays listed and can be tried again.
+                    self_ref_clone
+                        .mark_inactive(&failed_path, Some(&metadata), error_msg.clone())
+                        .await;
                     state_notify.notify_waiters();
 
                     error!("Failed to initialize plugin {plugin_name}: {error_msg}",);
@@ -727,6 +760,12 @@ impl PluginManager {
                                     "Plugin \"{}\" is disabled in configuration, skipping.",
                                     metadata.name
                                 );
+                                self.mark_inactive(
+                                    &path,
+                                    Some(&metadata),
+                                    "Disabled in the server configuration.",
+                                )
+                                .await;
                                 loader_found = true;
                                 break;
                             }
@@ -746,6 +785,12 @@ impl PluginManager {
                                         "Plugin \"{}\" ({:?}) is unsigned or invalid and allow_unsigned is disabled in configuration, skipping.",
                                         metadata.name, path
                                     );
+                                    self.mark_inactive(
+                                        &path,
+                                        Some(&metadata),
+                                        "Unsigned or invalid signature, and allow_unsigned is off.",
+                                    )
+                                    .await;
                                     loader_found = true;
                                     break;
                                 }
@@ -760,7 +805,12 @@ impl PluginManager {
                             ));
                             loader_found = true;
                         }
-                        Err(err) => error!("Failed to load plugin from {:?}: {}", path, err),
+                        Err(err) => {
+                            error!("Failed to load plugin from {:?}: {}", path, err);
+                            // No metadata: the file never got far enough to name itself.
+                            self.mark_inactive(&path, None, err.to_string()).await;
+                            loader_found = true;
+                        }
                     }
                     break;
                 }
@@ -813,6 +863,8 @@ impl PluginManager {
                         "Permission denied for plugin \"{}\", skipping loading.",
                         metadata.name
                     );
+                    self.mark_inactive(&path, Some(&metadata), PERMISSION_DENIED)
+                        .await;
                     continue;
                 }
 
@@ -975,6 +1027,8 @@ impl PluginManager {
                         "Permission denied for plugin \"{}\", skipping loading.",
                         metadata.name
                     );
+                    self.mark_inactive(path, Some(&metadata), PERMISSION_DENIED)
+                        .await;
                     return Err(ManagerError::LoaderError(LoaderError::RuntimeError(
                         "Permission denied".to_string(),
                     )));
@@ -1126,6 +1180,33 @@ impl PluginManager {
             .collect()
     }
 
+    /// Plugins that are known but not running: unloaded on request, or failed to initialize.
+    pub async fn inactive_plugins(&self) -> Vec<InactivePlugin> {
+        self.inactive.read().await.values().cloned().collect()
+    }
+
+    /// Records why a plugin file is not running, so it can be reported and not only logged.
+    async fn mark_inactive(
+        &self,
+        path: &Path,
+        metadata: Option<&PluginMetadata>,
+        reason: impl Into<String>,
+    ) {
+        self.inactive.write().await.insert(
+            path.to_path_buf(),
+            InactivePlugin {
+                metadata: metadata.cloned(),
+                path: path.to_path_buf(),
+                reason: reason.into(),
+            },
+        );
+    }
+
+    /// Files in the plugin directory that no loader would take.
+    pub async fn unloaded_files(&self) -> Vec<PathBuf> {
+        self.unloaded_files.read().await.iter().cloned().collect()
+    }
+
     /// Unload a plugin by name
     pub async fn unload_plugin(&self, name: &str) -> Result<(), ManagerError> {
         let mut plugin = {
@@ -1148,9 +1229,12 @@ impl PluginManager {
         }
 
         if plugin.loader.can_unload() {
-            if let Some(data) = plugin.loader_data {
+            if let Some(data) = plugin.loader_data.take() {
                 plugin.loader.unload(data).await?;
             }
+            // Dropped from `plugins`, so remember it here or it vanishes from every view.
+            self.mark_inactive(&plugin.path, Some(&plugin.metadata), String::new())
+                .await;
         } else {
             plugin.is_active = false;
             self.plugins
