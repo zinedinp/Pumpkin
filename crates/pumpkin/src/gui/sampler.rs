@@ -11,7 +11,8 @@ use uuid::Uuid;
 use arc_swap::ArcSwap;
 use pumpkin_config::gui::GuiConfig;
 use pumpkin_gui_api::{
-    DiskSpace, LogRing, PlayerRow, ServerMessage, ServerMeta, Snapshot, SystemSampler, WorldRow,
+    DiskSpace, LogRing, PlayerRow, PluginRow, ServerMessage, ServerMeta, Snapshot, SystemSampler,
+    TickState, WorldRow,
 };
 
 use super::ipc::Broadcaster;
@@ -57,7 +58,31 @@ pub fn spawn(server: &Arc<Server>, ring: &Arc<LogRing>, tx: &Broadcaster, config
     let disk = Arc::new(ArcSwap::from_pointee(DiskUsage::default()));
 
     spawn_disk_scanner(server, &disk, config.disk_scan_secs);
+    spawn_plugin_watcher(server, tx);
     spawn_fast_sampler(server, ring, tx, &disk, config.refresh_ms);
+}
+
+/// Re-sends the plugin list whenever it changes.
+fn spawn_plugin_watcher(server: &Arc<Server>, tx: &Broadcaster) {
+    let server = server.clone();
+    let tx = tx.clone();
+    let interval = Duration::from_secs(2);
+
+    server.clone().spawn_task(async move {
+        let mut last: Option<Vec<PluginRow>> = None;
+
+        while !SHOULD_STOP.load(Ordering::Relaxed) {
+            let rows = super::plugins::collect(&server).await;
+            if last.as_ref() != Some(&rows) {
+                let _ = tx.send(ServerMessage::Plugins(rows.clone()));
+                last = Some(rows);
+            }
+
+            if stopping_during(interval).await {
+                break;
+            }
+        }
+    });
 }
 
 fn spawn_fast_sampler(
@@ -108,6 +133,7 @@ fn spawn_fast_sampler(
                 // reads as thousands of TPS on an idle server.
                 tps: server.get_tps().min(f64::from(server.basic_config.tps)),
                 mspt: server.get_mspt(),
+                tick: tick_state(&server),
                 tick_times_nanos: tick_times(&server),
                 players,
                 worlds,
@@ -196,6 +222,16 @@ fn spawn_disk_scanner(server: &Arc<Server>, disk: &Arc<ArcSwap<DiskUsage>>, scan
             }
         }
     });
+}
+
+fn tick_state(server: &Server) -> TickState {
+    let manager = &server.tick_rate_manager;
+    TickState {
+        tickrate: manager.tickrate(),
+        frozen: manager.is_frozen(),
+        sprinting: manager.is_sprinting(),
+        stepping: manager.is_stepping_forward(),
+    }
 }
 
 /// The server's tick ring buffer, rotated so index 0 is the oldest sample.

@@ -5,8 +5,10 @@
 //! and hands the TTY console reader off when [`pumpkin_gui_api::GUI_ENDPOINT_ENV`] is set (a
 //! `pumpkin-gui` process spawned this one) or when stdin is not a terminal; `--nogui` opts out.
 
+mod config;
 mod ipc;
 mod log_layer;
+mod plugins;
 mod sampler;
 
 use std::sync::Arc;

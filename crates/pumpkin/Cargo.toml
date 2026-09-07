@@ -110,6 +110,8 @@ rustc_version_runtime.workspace = true
 flate2.workspace = true
 console-subscriber = { workspace = true, optional = true }
 pumpkin-gui-api = { path = "../pumpkin-gui-api", features = ["host"] }
+# GUI config editor
+toml = { workspace = true, optional = true }
 
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
@@ -135,7 +137,7 @@ tempfile.workspace = true
 [features]
 console-subscriber = ["dep:console-subscriber"]
 # Enables the local IPC listener and log ring a separate gui binary reads from.
-gui = []
+gui = ["dep:toml"]
 
 [lints]
 workspace = true

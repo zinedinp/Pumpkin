@@ -5,7 +5,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::model::{LogLine, ServerMeta, Snapshot, ThemePreference};
+use crate::model::{ConfigFile, LogLine, PluginRow, ServerMeta, Snapshot, ThemePreference};
 
 /// Correlates a `GuiMessage::Complete` request with its `ServerMessage::Completions` response.
 pub type RequestId = u32;
@@ -37,6 +37,15 @@ pub enum ServerMessage {
     },
     /// The server is entering graceful shutdown, the GUI should close its window.
     ShuttingDown,
+    /// The full plugin list; pushed on connect and after any plugin change
+    Plugins(Vec<PluginRow>),
+    /// The current on-disk contents of one configuration file.
+    Config { file: ConfigFile, toml: String },
+    /// Answers a `GuiMessage::WriteConfig`
+    ConfigWritten {
+        file: ConfigFile,
+        result: Result<(), String>,
+    },
 }
 
 /// Sent from a connected GUI to the server.
@@ -53,6 +62,10 @@ pub enum GuiMessage {
     },
     /// Begins a graceful shutdown.
     RequestStop,
+    /// Asks for the current contents of a configuration file, answered by `ServerMessage::Config`.
+    ReadConfig(ConfigFile),
+    /// Replaces a configuration file. not a command
+    WriteConfig { file: ConfigFile, toml: String },
 }
 
 /// A message larger than this is treated as a corrupt stream rather than allocated.

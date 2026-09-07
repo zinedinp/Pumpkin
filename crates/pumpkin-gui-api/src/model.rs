@@ -206,6 +206,90 @@ pub struct PlayerRow {
     pub whitelisted: bool,
 }
 
+/// Which loader backs a plugin.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PluginKind {
+    #[default]
+    Native,
+    Wasm,
+}
+
+impl PluginKind {
+    /// Lowercase name, used as the QML display/filter key.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Wasm => "wasm",
+        }
+    }
+}
+
+/// plugin states
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PluginState {
+    Loading,
+    #[default]
+    Loaded,
+    /// Carries the error the loader reported.
+    Failed(String),
+}
+
+/// One row of the plugin table.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginRow {
+    pub name: String,
+    pub version: String,
+    pub authors: Vec<String>,
+    pub description: String,
+    pub dependencies: Vec<String>,
+    pub permissions: Vec<String>,
+    pub kind: PluginKind,
+    pub state: PluginState,
+    pub active: bool,
+    /// False where the loader cannot unload at runtime
+    pub can_unload: bool,
+    pub path: String,
+}
+
+/// Which configuration file a [`crate::protocol::ServerMessage::Config`] carries.
+/// Only pumpkin.toml for now
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigFile {
+    #[default]
+    Pumpkin,
+}
+
+impl ConfigFile {
+    /// file name on disk and screen name.
+    #[must_use]
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Pumpkin => "pumpkin.toml",
+        }
+    }
+}
+
+/// Tick-rate state -> `ServerTickRateManager`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct TickState {
+    pub tickrate: f32,
+    pub frozen: bool,
+    pub sprinting: bool,
+    pub stepping: bool,
+}
+
+impl Default for TickState {
+    fn default() -> Self {
+        Self {
+            tickrate: 20.0,
+            frozen: false,
+            sprinting: false,
+            stepping: false,
+        }
+    }
+}
+
 /// One row of the world table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldRow {
@@ -250,6 +334,7 @@ pub struct Snapshot {
 
     pub tps: f64,
     pub mspt: f64,
+    pub tick: TickState,
     /// The server's rolling window of the last 100 tick durations.
     pub tick_times_nanos: Vec<i64>,
 

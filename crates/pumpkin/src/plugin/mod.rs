@@ -213,6 +213,15 @@ struct LoadedPlugin {
     path: PathBuf,
 }
 
+/// [`PluginMetadata`] is mirrored guest (`pumpkin-plugin-api`)
+pub struct PluginEntry {
+    pub metadata: PluginMetadata,
+    pub path: PathBuf,
+    pub active: bool,
+    /// False where the loader cannot unload at runtime
+    pub can_unload: bool,
+}
+
 /// Error types for plugin management
 #[derive(Error, Debug)]
 pub enum ManagerError {
@@ -1099,16 +1108,21 @@ impl PluginManager {
             .map(|p| (p.path.clone(), p.is_active))
     }
 
-    /// Every loaded plugin's file and active flag, keyed by plugin name.
+    /// Every loaded plugin, with the informations that are outside [`PluginMetadata`].
     #[must_use]
-    pub fn plugin_files(&self) -> Vec<(String, PathBuf, bool)> {
+    pub fn plugin_entries(&self) -> Vec<PluginEntry> {
         let plugins = self
             .plugins
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         plugins
             .iter()
-            .map(|p| (p.metadata.name.clone(), p.path.clone(), p.is_active))
+            .map(|p| PluginEntry {
+                metadata: p.metadata.clone(),
+                path: p.path.clone(),
+                active: p.is_active && p.instance.is_some(),
+                can_unload: p.loader.can_unload(),
+            })
             .collect()
     }
 

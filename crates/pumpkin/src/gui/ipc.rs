@@ -11,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 
 use pumpkin_config::gui::GuiConfig;
 use pumpkin_gui_api::{
-    GuiMessage, LogRing, PROTOCOL_VERSION, ServerMessage, ServerMeta, ThemePreference,
+    ConfigFile, GuiMessage, LogRing, PROTOCOL_VERSION, ServerMessage, ServerMeta, ThemePreference,
     read_message, write_message,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -187,6 +187,11 @@ async fn handle_connection<R, W>(
         let _ = out_tx.send(ServerMessage::LogLines(backlog));
     }
 
+    // Plugin state changes are pushed here rather than sendin with every snapshot
+    let _ = out_tx.send(ServerMessage::Plugins(
+        super::plugins::collect(server).await,
+    ));
+
     server.clone().spawn_task(writer_loop(write_half, out_rx));
     server
         .clone()
@@ -207,6 +212,17 @@ async fn handle_connection<R, W>(
                 let _ = out_tx.send(ServerMessage::Completions { id, candidates });
             }
             Ok(GuiMessage::RequestStop) => submit(server, "stop".to_owned()),
+            Ok(GuiMessage::ReadConfig(file)) => send_config(&out_tx, file),
+            Ok(GuiMessage::WriteConfig { file, toml }) => {
+                let result = super::config::write(file, &toml);
+                let wrote = result.is_ok();
+                let _ = out_tx.send(ServerMessage::ConfigWritten { file, result });
+                // Only on success: a rejected write left the file alone, and echoing it back
+                // would overwrite the error the GUI has not shown yet.
+                if wrote {
+                    send_config(&out_tx, file);
+                }
+            }
             Err(_) => break,
         }
     }
@@ -269,6 +285,21 @@ async fn forward_loop(
             }
             Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+/// Sends one config file's contents
+fn send_config(tx: &mpsc::UnboundedSender<ServerMessage>, file: ConfigFile) {
+    match super::config::read(file) {
+        Ok(toml) => {
+            let _ = tx.send(ServerMessage::Config { file, toml });
+        }
+        Err(err) => {
+            let _ = tx.send(ServerMessage::ConfigWritten {
+                file,
+                result: Err(err),
+            });
         }
     }
 }
