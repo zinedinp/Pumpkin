@@ -39,8 +39,11 @@ pub enum ServerMessage {
     ShuttingDown,
     /// The full plugin list; pushed on connect and after any plugin change
     Plugins(Vec<PluginRow>),
-    /// The current on-disk contents of one configuration file.
-    Config { file: ConfigFile, toml: String },
+    /// One configuration file as it is on disk or why it could not be read.
+    Config {
+        file: ConfigFile,
+        toml: Result<String, String>,
+    },
     /// Answers a `GuiMessage::WriteConfig`
     ConfigWritten {
         file: ConfigFile,

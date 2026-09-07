@@ -22,11 +22,7 @@ pub fn read(file: ConfigFile) -> Result<String, String> {
 /// server down over a bad value in a file that is not even loaded yet.
 pub fn write(file: ConfigFile, toml: &str) -> Result<(), String> {
     let parsed: toml::Value = toml::from_str(toml).map_err(|err| err.to_string())?;
-
-    let config: PumpkinConfig = parsed
-        .clone()
-        .try_into()
-        .map_err(|err: toml::de::Error| err.to_string())?;
+    let config: PumpkinConfig = toml::from_str(toml).map_err(|err| err.to_string())?;
 
     let round_trip = toml::Value::try_from(&config).map_err(|err| err.to_string())?;
     let mut unknown = Vec::new();

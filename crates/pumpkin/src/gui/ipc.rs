@@ -291,17 +291,10 @@ async fn forward_loop(
 
 /// Sends one config file's contents
 fn send_config(tx: &mpsc::UnboundedSender<ServerMessage>, file: ConfigFile) {
-    match super::config::read(file) {
-        Ok(toml) => {
-            let _ = tx.send(ServerMessage::Config { file, toml });
-        }
-        Err(err) => {
-            let _ = tx.send(ServerMessage::ConfigWritten {
-                file,
-                result: Err(err),
-            });
-        }
-    }
+    let _ = tx.send(ServerMessage::Config {
+        file,
+        toml: super::config::read(file),
+    });
 }
 
 /// Runs a console command exactly as if it had been typed in the terminal, so plugins see the
