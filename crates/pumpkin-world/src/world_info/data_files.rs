@@ -6,6 +6,7 @@ use std::{
 
 use pumpkin_data::game_rules::{GameRule, GameRuleRegistry, GameRuleValue};
 use pumpkin_nbt::{compound::NbtCompound, nbt_compress::read_gzip_compound_tag, tag::NbtTag};
+use pumpkin_util::math::vector2::Vector2;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -167,6 +168,91 @@ pub fn write_weather(level_folder: &Path, data: &WeatherData) -> Result<(), Worl
     data_comp.put_bool("thundering", data.thundering);
     let mut root = NbtCompound::new();
     root.put_int("DataVersion", data.data_version);
+    root.put_compound("data", data_comp);
+    pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, BufWriter::new(file))
+        .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
+}
+
+const FORCED_TICKET_TYPE: &str = "minecraft:forced";
+
+/// Vanilla `ChunkMap.FORCED_TICKET_LEVEL`. Pumpkin's loader uses its own level scale, so this
+/// is written only so vanilla reads the file back correctly.
+const VANILLA_FORCED_TICKET_LEVEL: i32 = 31;
+
+/// Reads vanilla's `TicketStorage` at `<dimension>/data/minecraft/chunk_tickets.dat`. Only
+/// forced tickets are taken.
+#[must_use]
+pub fn read_forced_chunks(dim_folder: &Path) -> Vec<Vector2<i32>> {
+    let path = minecraft_data_dir(dim_folder).join("chunk_tickets.dat");
+    if !path.exists() {
+        return Vec::new();
+    }
+    let root = match File::open(&path) {
+        Ok(f) => match read_gzip_compound_tag(f) {
+            Ok(compound) => compound,
+            Err(e) => {
+                warn!("Failed to deserialize chunk_tickets.dat, no chunk stays forced: {e}");
+                return Vec::new();
+            }
+        },
+        Err(e) => {
+            warn!("Failed to open chunk_tickets.dat, no chunk stays forced: {e}");
+            return Vec::new();
+        }
+    };
+
+    let Some(tickets) = root
+        .get_compound("data")
+        .and_then(|data| data.get_list("tickets"))
+    else {
+        return Vec::new();
+    };
+
+    tickets
+        .iter()
+        .filter_map(NbtTag::extract_compound)
+        .filter(|ticket| ticket.get_string("type") == Some(FORCED_TICKET_TYPE))
+        .filter_map(|ticket| match ticket.get_int_array("chunk_pos") {
+            Some(&[x, z]) => Some(Vector2::new(x, z)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Writes the forced chunks back in vanilla's ticket format. An empty list still clears an
+/// existing file, so an unforced chunk does not come back on the next start.
+pub fn write_forced_chunks(
+    dim_folder: &Path,
+    chunks: &[Vector2<i32>],
+    data_version: i32,
+) -> Result<(), WorldInfoError> {
+    if chunks.is_empty()
+        && !minecraft_data_dir(dim_folder)
+            .join("chunk_tickets.dat")
+            .exists()
+    {
+        return Ok(());
+    }
+
+    let dir = ensure_minecraft_data_dir(dim_folder)?;
+    let path = dir.join("chunk_tickets.dat");
+    let file = File::create(&path)?;
+
+    let tickets = chunks
+        .iter()
+        .map(|pos| {
+            let mut ticket = NbtCompound::new();
+            ticket.put_string("type", FORCED_TICKET_TYPE.to_string());
+            ticket.put_int("level", VANILLA_FORCED_TICKET_LEVEL);
+            ticket.put("chunk_pos", NbtTag::IntArray(vec![pos.x, pos.y]));
+            NbtTag::Compound(ticket)
+        })
+        .collect();
+
+    let mut data_comp = NbtCompound::new();
+    data_comp.put_list("tickets", tickets);
+    let mut root = NbtCompound::new();
+    root.put_int("DataVersion", data_version);
     root.put_compound("data", data_comp);
     pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, BufWriter::new(file))
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
@@ -709,4 +795,41 @@ pub fn write_stopwatches_stub(
     let file = File::create(&path)?;
     pumpkin_nbt::nbt_compress::write_gzip_compound_tag(root, file)
         .map_err(|e| WorldInfoError::SerializationError(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_forced_chunks, write_forced_chunks};
+    use pumpkin_util::math::vector2::Vector2;
+
+    #[test]
+    fn forced_chunks_survive_a_round_trip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let chunks = [Vector2::new(3, -7), Vector2::new(-100, 250)];
+
+        write_forced_chunks(dir.path(), &chunks, 4903).unwrap();
+        let mut restored = read_forced_chunks(dir.path());
+        restored.sort_by_key(|pos| (pos.x, pos.y));
+
+        assert_eq!(restored, [Vector2::new(-100, 250), Vector2::new(3, -7)]);
+    }
+
+    #[test]
+    fn unforcing_every_chunk_clears_the_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        write_forced_chunks(dir.path(), &[Vector2::new(1, 1)], 4903).unwrap();
+        write_forced_chunks(dir.path(), &[], 4903).unwrap();
+
+        assert!(read_forced_chunks(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn no_forced_chunk_writes_no_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        write_forced_chunks(dir.path(), &[], 4903).unwrap();
+
+        assert!(!super::minecraft_data_dir(dir.path()).exists());
+    }
 }

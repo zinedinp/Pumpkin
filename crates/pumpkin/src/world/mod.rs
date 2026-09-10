@@ -390,7 +390,11 @@ impl World {
             NbtCompound::new()
         };
 
-        Self {
+        let restored_forced_chunks = pumpkin_world::world_info::data_files::read_forced_chunks(
+            &level.level_folder.dim_folder,
+        );
+
+        let world = Self {
             uuid: Uuid::new_v4(),
             level,
             level_info,
@@ -427,7 +431,10 @@ impl World {
             custom_data: std::sync::Mutex::new(custom_data),
             custom_block_entity_data: DashMap::new(),
             entity_tracker: entity_tracker::EntityTracker::new(),
-        }
+        };
+
+        world.set_chunks_forced(&restored_forced_chunks, true);
+        world
     }
 
     /// Vanilla `ServerLevel.setChunkForced`. The set drives simulation, keeps
@@ -469,6 +476,26 @@ impl World {
         }
 
         changed.len()
+    }
+
+    /// Vanilla persists its `TicketStorage` whenever it is dirty; we write it out on save and
+    /// on shutdown instead, so `/forceload` survives a restart.
+    fn save_forced_chunks(&self) {
+        let chunks: Vec<Vector2<i32>> = self
+            .forced_chunks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .copied()
+            .collect();
+
+        if let Err(e) = pumpkin_world::world_info::data_files::write_forced_chunks(
+            &self.level.level_folder.dim_folder,
+            &chunks,
+            pumpkin_world::world_info::MAXIMUM_SUPPORTED_WORLD_DATA_VERSION,
+        ) {
+            error!("Failed to save forced chunks: {e}");
+        }
     }
 
     pub fn update_active_chunks(&self) {
@@ -613,6 +640,8 @@ impl World {
         if let Err(e) = save_result {
             error!("Failed to save portal POI: {e}");
         }
+
+        self.save_forced_chunks();
 
         self.level.shutdown().await;
     }
@@ -7170,6 +7199,8 @@ impl World {
         if let Ok(mut portal_poi) = self.portal_poi.try_lock() {
             let _ = portal_poi.save_all();
         }
+
+        self.save_forced_chunks();
 
         {
             let custom_data = self
