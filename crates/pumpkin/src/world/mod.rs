@@ -4202,6 +4202,9 @@ impl World {
                             new_list.push(player.clone());
                             new_list
                         });
+                        destination
+                            .entity_tracker
+                            .add_entity(&(player.clone() as Arc<dyn EntityBase>), &destination);
                     }
 
                     (Some(destination), position, yaw, pitch)
