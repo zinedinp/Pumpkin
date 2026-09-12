@@ -3881,9 +3881,11 @@ impl World {
 
         player.send_client_information();
 
-        // Re-pairs this player with every viewer through the tracker, so the spawn
-        // packet stays distance-gated and recorded in `seen_by`.
         chunker::update_position(player);
+
+        // Re-pair through the tracker, so the spawn packet stays distance-gated and
+        // recorded in `seen_by`. Not left to `update_position`.
+        self.entity_tracker.update_player_position(player, self);
         // Update commands
 
         player.set_health(20.0);
