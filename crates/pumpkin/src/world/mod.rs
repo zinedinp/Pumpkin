@@ -3863,13 +3863,7 @@ impl World {
         self.send_to_tracking_players_editioned(from.get_entity(), &je_packet, &be_mob_equipment);
     }
 
-    pub fn send_world_info(
-        &self,
-        player: &Arc<Player>,
-        position: Vector3<f64>,
-        yaw: f32,
-        pitch: f32,
-    ) {
+    pub fn send_world_info(&self, player: &Arc<Player>) {
         if let ClientPlatform::Java(client) = player.client.as_ref() {
             self.worldborder
                 .lock()
@@ -3885,26 +3879,10 @@ impl World {
             player.try_send_client_packet(&CGameEvent::new(GameEvent::StartWaitingChunks, 0.0));
         }
 
-        let entity = &player.get_entity();
-
-        self.broadcast_packet_except(
-            &[player.gameprofile.id],
-            // TODO: add velo
-            &CSpawnEntity::new(
-                entity.entity_id.into(),
-                player.gameprofile.id,
-                i32::from(EntityType::PLAYER.id).into(),
-                position,
-                pitch,
-                yaw,
-                yaw,
-                0.into(),
-                Vector3::new(0.0, 0.0, 0.0),
-            ),
-        );
-
         player.send_client_information();
 
+        // Re-pairs this player with every viewer through the tracker, so the spawn
+        // packet stays distance-gated and recorded in `seen_by`.
         chunker::update_position(player);
         // Update commands
 
@@ -4318,7 +4296,7 @@ impl World {
         // TODO: difficulty, exp bar, status effect
 
         // Load chunks and send world info FIRST (before teleport packet)
-        target_world.send_world_info(player, position, yaw, pitch);
+        target_world.send_world_info(player);
 
         // Ensure at least the center chunk is sent synchronously before teleport.
         if let crate::net::ClientPlatform::Java(java_client) = player.client.as_ref() {

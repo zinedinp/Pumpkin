@@ -3849,6 +3849,9 @@ impl Player {
                     new_list.push(player.clone());
                     new_list
                 });
+                new_world
+                    .entity_tracker
+                    .add_entity(&(player.clone() as Arc<dyn EntityBase>), &new_world);
                 self.unload_watched_chunks(&current_world).await;
 
                 self.change_world_chunks(&current_world.level, &new_world);
@@ -3931,7 +3934,7 @@ impl Player {
 
                 self.send_health();
 
-                new_world.send_world_info(&player, position, yaw, pitch);
+                new_world.send_world_info(&player);
 
                 if let ClientPlatform::Java(java_client) = player.client.as_ref() {
                     let center_chunk = player.get_entity().chunk_pos.load();
