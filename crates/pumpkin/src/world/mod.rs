@@ -313,6 +313,13 @@ impl PartialEq for World {
 impl Eq for World {}
 
 impl World {
+    const TAB_LIST_ADD_FLAGS: u8 = PlayerInfoFlags::ADD_PLAYER.bits()
+        | PlayerInfoFlags::UPDATE_LISTED.bits()
+        | PlayerInfoFlags::UPDATE_GAME_MODE.bits()
+        | PlayerInfoFlags::UPDATE_LATENCY.bits()
+        | PlayerInfoFlags::UPDATE_LIST_PRIORITY.bits()
+        | PlayerInfoFlags::UPDATE_HAT.bits();
+
     pub async fn get_block_state_id_async(&self, position: &BlockPos) -> BlockStateId {
         if !self.is_in_build_limit(*position) {
             return Block::AIR.default_state.id;
@@ -3388,6 +3395,11 @@ impl World {
             }
         }
         client.send_chunks(&[chunk]).await;
+        player
+            .chunk_sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mark_sent_out_of_band(center_chunk);
 
         let velocity = player.living_entity.entity.velocity.load();
 
@@ -3427,16 +3439,7 @@ impl World {
             uuid: gameprofile.id,
             actions: &player_actions,
         }];
-        let player_info_update = CPlayerInfoUpdate::new(
-            (PlayerInfoFlags::ADD_PLAYER
-                | PlayerInfoFlags::UPDATE_GAME_MODE
-                | PlayerInfoFlags::UPDATE_LISTED
-                | PlayerInfoFlags::UPDATE_LATENCY
-                | PlayerInfoFlags::UPDATE_LIST_PRIORITY
-                | PlayerInfoFlags::UPDATE_HAT)
-                .bits(),
-            &java_player,
-        );
+        let player_info_update = CPlayerInfoUpdate::new(Self::TAB_LIST_ADD_FLAGS, &java_player);
 
         self.broadcast_editioned(&player_info_update, &bedrock_player_list);
 
@@ -3599,44 +3602,9 @@ impl World {
             .iter()
             .filter(|c| c.gameprofile.id != id)
         {
-            let gameprofile = &existing_player.gameprofile;
-            let bedrock_player_list = existing_player.bedrock_player_list();
-
-            let actions = [
-                PlayerAction::AddPlayer {
-                    name: &gameprofile.name,
-                    properties: &gameprofile.properties.load(),
-                },
-                PlayerAction::UpdateGameMode(VarInt(existing_player.gamemode.load() as i32)),
-                PlayerAction::UpdateListed(existing_player.tab_list_listed.load(Ordering::Relaxed)),
-                PlayerAction::UpdateLatency(VarInt(
-                    existing_player.tab_list_latency.load(Ordering::Relaxed),
-                )),
-                PlayerAction::UpdateListOrder(VarInt(
-                    existing_player.tab_list_order.load(Ordering::Relaxed),
-                )),
-                PlayerAction::UpdateHat(true),
-            ];
-            let java_player = [pumpkin_protocol::java::client::play::Player {
-                uuid: gameprofile.id,
-                actions: &actions,
-            }];
-            player
-                .client
-                .enqueue_packet_editioned(
-                    &CPlayerInfoUpdate::new(
-                        (PlayerInfoFlags::ADD_PLAYER
-                            | PlayerInfoFlags::UPDATE_LISTED
-                            | PlayerInfoFlags::UPDATE_GAME_MODE
-                            | PlayerInfoFlags::UPDATE_LATENCY
-                            | PlayerInfoFlags::UPDATE_LIST_PRIORITY
-                            | PlayerInfoFlags::UPDATE_HAT)
-                            .bits(),
-                        &java_player,
-                    ),
-                    &bedrock_player_list,
-                )
-                .await;
+            Self::with_player_list_entry(existing_player, |java, bedrock| {
+                player.client.try_enqueue_packet_editioned(java, bedrock);
+            });
 
             if client.version.load() >= JavaMinecraftVersion::V_1_21 {
                 let config = existing_player.config.load();
@@ -3882,10 +3850,6 @@ impl World {
         player.send_client_information();
 
         chunker::update_position(player);
-
-        // Re-pair through the tracker, so the spawn packet stays distance-gated and
-        // recorded in `seen_by`. Not left to `update_position`.
-        self.entity_tracker.update_player_position(player, self);
         // Update commands
 
         player.set_health(20.0);
@@ -4182,9 +4146,6 @@ impl World {
                             new_list.push(player.clone());
                             new_list
                         });
-                        destination
-                            .entity_tracker
-                            .add_entity(&(player.clone() as Arc<dyn EntityBase>), &destination);
                     }
 
                     (Some(destination), position, yaw, pitch)
@@ -4297,18 +4258,22 @@ impl World {
 
         // TODO: difficulty, exp bar, status effect
 
+        // Registered after positioning; a same-dimension respawn keeps its client entities.
+        if target_world.uuid == self.uuid {
+            // Clients never remove a dead entity themselves, so viewers would keep the corpse.
+            target_world
+                .entity_tracker
+                .respawn_entity(&(player.clone() as Arc<dyn EntityBase>), &target_world);
+        } else {
+            target_world.add_arriving_player(player);
+            target_world
+                .entity_tracker
+                .repair_respawned_player(player, &target_world);
+        }
+
         // Load chunks and send world info FIRST (before teleport packet)
         target_world.send_world_info(player);
-
-        // Ensure at least the center chunk is sent synchronously before teleport.
-        if let crate::net::ClientPlatform::Java(java_client) = player.client.as_ref() {
-            let center_chunk = player.get_entity().chunk_pos.load();
-            let chunk = target_world
-                .level
-                .get_or_fetch_chunk(center_chunk, std::clone::Clone::clone)
-                .await;
-            java_client.send_chunks(&[chunk]).await;
-        }
+        target_world.send_center_chunk(player).await;
 
         // Send teleport packet after at least the center chunk was delivered
         player.request_teleport(position, yaw, pitch);
@@ -4764,6 +4729,73 @@ impl World {
         self.entity_tracker
             .add_entity(&(player.clone() as Arc<dyn EntityBase>), self);
         Ok(())
+    }
+
+    /// Tab-list add entry for `player` from its stored state, as Java and Bedrock packets.
+    fn with_player_list_entry<R>(
+        player: &Player,
+        f: impl FnOnce(&CPlayerInfoUpdate<'_>, &CPlayerList) -> R,
+    ) -> R {
+        let profile = &player.gameprofile;
+        let properties = profile.properties.load();
+        let actions = [
+            PlayerAction::AddPlayer {
+                name: &profile.name,
+                properties: &properties,
+            },
+            PlayerAction::UpdateGameMode(VarInt(player.gamemode.load() as i32)),
+            PlayerAction::UpdateListed(player.tab_list_listed.load(Ordering::Relaxed)),
+            PlayerAction::UpdateLatency(VarInt(player.tab_list_latency.load(Ordering::Relaxed))),
+            PlayerAction::UpdateListOrder(VarInt(player.tab_list_order.load(Ordering::Relaxed))),
+            PlayerAction::UpdateHat(true),
+        ];
+        let entry = [pumpkin_protocol::java::client::play::Player {
+            uuid: profile.id,
+            actions: &actions,
+        }];
+        f(
+            &CPlayerInfoUpdate::new(Self::TAB_LIST_ADD_FLAGS, &entry),
+            &player.bedrock_player_list(),
+        )
+    }
+
+    /// Publishes a player from another world -> tab list first, Java drops spawns without it.
+    pub fn add_arriving_player(&self, player: &Arc<Player>) {
+        let id = player.gameprofile.id;
+        Self::with_player_list_entry(player, |java, bedrock| {
+            self.broadcast_packet_except_editioned(&[id], java, bedrock);
+        });
+        for existing in self
+            .players
+            .load()
+            .iter()
+            .filter(|p| p.gameprofile.id != id)
+        {
+            Self::with_player_list_entry(existing, |java, bedrock| {
+                player.client.try_enqueue_packet_editioned(java, bedrock);
+            });
+        }
+
+        self.entity_tracker
+            .add_entity(&(player.clone() as Arc<dyn EntityBase>), self);
+    }
+
+    /// Sends the centre chunk ahead of the teleport and records it as held.
+    pub async fn send_center_chunk(&self, player: &Player) {
+        let ClientPlatform::Java(java_client) = player.client.as_ref() else {
+            return;
+        };
+        let center_chunk = player.get_entity().chunk_pos.load();
+        let chunk = self
+            .level
+            .get_or_fetch_chunk(center_chunk, std::clone::Clone::clone)
+            .await;
+        java_client.send_chunks(&[chunk]).await;
+        player
+            .chunk_sender
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mark_sent_out_of_band(center_chunk);
     }
 
     /// Must only be called after the player's own `CLogin` packet has been sent.

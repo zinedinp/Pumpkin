@@ -103,7 +103,7 @@ impl ChunkSender {
         self.sent_chunks.contains(pos)
     }
 
-    /// Vanilla `ChunkMap.isChunkTracked` -> chunk packet is already queued for this player.
+    /// Vanilla `ChunkMap.isChunkTracked` -> the client holds this chunk (view checked by caller).
     #[must_use]
     pub fn is_chunk_ready(&self, pos: &Vector2<i32>) -> bool {
         self.sent_chunks.contains(pos) && !self.awaiting_delivery.contains_key(pos)
@@ -128,6 +128,13 @@ impl ChunkSender {
         self.sent_chunks.len()
     }
 
+    /// Records a chunk sent outside the batch path as held.
+    pub fn mark_sent_out_of_band(&mut self, pos: Vector2<i32>) {
+        self.pending_chunks.remove(&pos);
+        self.awaiting_delivery.remove(&pos);
+        self.sent_chunks.insert(pos);
+    }
+
     pub const fn on_batch_acknowledged(&mut self, client_requested_rate: f32) -> bool {
         if self.in_flight_batches == 0 {
             return false;
@@ -148,8 +155,8 @@ impl ChunkSender {
         true
     }
 
+    /// Vanilla `ChunkMap.markChunkPendingToSend` -> a held copy stays tracked while re-queued.
     pub fn enqueue_chunk(&mut self, pos: Vector2<i32>) {
-        self.sent_chunks.remove(&pos);
         self.awaiting_delivery.remove(&pos);
         self.pending_chunks.insert(pos);
     }
@@ -515,8 +522,9 @@ mod tests {
         second.mark_delivered(&[(position, second_dispatch[0].delivery_token)]);
         assert!(second.is_chunk_ready(&position));
 
+        // Re-queueing a held chunk keeps it tracked.
         first.enqueue_chunk(position);
-        assert!(!first.is_chunk_ready(&position));
+        assert!(first.is_chunk_ready(&position));
         assert!(second.is_chunk_ready(&position));
     }
 

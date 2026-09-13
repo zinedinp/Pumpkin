@@ -653,6 +653,15 @@ impl TrackedEntity {
         }
     }
 
+    /// Forgets the player as a viewer without a removal packet; the client already dropped it.
+    pub fn forget_player(&self, player: &Player) {
+        if self.seen_by.remove(&player.gameprofile.id).is_some()
+            && matches!(player.client.as_ref(), ClientPlatform::Bedrock(_))
+        {
+            self.bedrock_watchers.fetch_sub(1, Relaxed);
+        }
+    }
+
     pub fn send_to_tracking_players<P: ClientPacket + Sync>(&self, packet: &P, world: &World) {
         if self.seen_by.is_empty() {
             return;
@@ -859,6 +868,25 @@ impl EntityTracker {
         for entry in &self.entity_map {
             if *entry.key() != entity_id {
                 entry.value().update_player(player_arc, world);
+            }
+        }
+    }
+
+    /// Vanilla `PlayerList.respawn` -> viewers drop the dead entity, then spawn it fresh.
+    pub fn respawn_entity(&self, entity: &Arc<dyn EntityBase>, world: &World) {
+        if let Some((_, tracked)) = self.entity_map.remove(&entity.get_entity().entity_id) {
+            tracked.broadcast_removed(world);
+        }
+        self.add_entity(entity, world);
+    }
+
+    /// Vanilla `PlayerList.respawn` recreates the player -> forget and re-pair it as a viewer.
+    pub fn repair_respawned_player(&self, player: &Arc<Player>, world: &World) {
+        let entity_id = player.get_entity().entity_id;
+        for entry in &self.entity_map {
+            if *entry.key() != entity_id {
+                entry.value().forget_player(player);
+                entry.value().update_player(player, world);
             }
         }
     }

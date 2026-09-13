@@ -3849,9 +3849,6 @@ impl Player {
                     new_list.push(player.clone());
                     new_list
                 });
-                new_world
-                    .entity_tracker
-                    .add_entity(&(player.clone() as Arc<dyn EntityBase>), &new_world);
                 self.unload_watched_chunks(&current_world).await;
 
                 self.change_world_chunks(&current_world.level, &new_world);
@@ -3924,6 +3921,9 @@ impl Player {
                 player.get_entity().set_rotation(yaw, pitch);
                 player.get_entity().last_pos.store(position);
 
+                // Registered after positioning, so spawns carry the new position.
+                new_world.add_arriving_player(&player);
+
                 self.send_abilities_update();
 
                 self.enqueue_set_held_item_packet(&CSetSelectedSlot::new(
@@ -3935,15 +3935,7 @@ impl Player {
                 self.send_health();
 
                 new_world.send_world_info(&player);
-
-                if let ClientPlatform::Java(java_client) = player.client.as_ref() {
-                    let center_chunk = player.get_entity().chunk_pos.load();
-                    let chunk = new_world
-                        .level
-                        .get_or_fetch_chunk(center_chunk, std::clone::Clone::clone)
-                        .await;
-                    java_client.send_chunks(&[chunk]).await;
-                }
+                new_world.send_center_chunk(&player).await;
 
                 player.request_teleport(position, yaw, pitch);
 
