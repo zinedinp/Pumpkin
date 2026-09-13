@@ -3438,27 +3438,12 @@ impl World {
         player.request_teleport(position, yaw, pitch);
 
         let gameprofile = &player.gameprofile;
-        let bedrock_player_list = CPlayerList {
-            action: CPlayerList::ACTION_ADD,
-            entries: vec![PlayerListEntry {
-                uuid: gameprofile.id,
-                entity_unique_id: VarLong(entity_id as i64),
-                username: gameprofile.name.clone(),
-                xuid: String::new(),
-                platform_chat_id: String::new(),
-                build_platform: BuildPlatform::Unknown,
-                skin: (**player.bedrock_skin.load()).clone(),
-                is_teacher: false,
-                is_host: false,
-                is_sub_client: false,
-                player_color: [0, 0, 0, 0],
-            }],
-        };
-
+        let bedrock_player_list = player.bedrock_player_list();
+        let java_properties = gameprofile.properties.load();
         let player_actions = [
             PlayerAction::AddPlayer {
                 name: &gameprofile.name,
-                properties: &gameprofile.properties.load(),
+                properties: &java_properties,
             },
             PlayerAction::UpdateGameMode(VarInt(gamemode as i32)),
             PlayerAction::UpdateListed(true),
@@ -3470,9 +3455,10 @@ impl World {
             uuid: gameprofile.id,
             actions: &player_actions,
         }];
-        let player_info_update = CPlayerInfoUpdate::new(Self::TAB_LIST_ADD_FLAGS, &java_player);
-
-        self.broadcast_editioned(&player_info_update, &bedrock_player_list);
+        self.broadcast_editioned(
+            &CPlayerInfoUpdate::new(Self::TAB_LIST_ADD_FLAGS, &java_player),
+            &bedrock_player_list,
+        );
 
         // If the player has a custom tab_list_name, send an update for it
         if let Some(tab_list_name) = player.get_tab_list_name() {
@@ -3496,20 +3482,21 @@ impl World {
                 .iter()
                 .filter(|p| p.gameprofile.id != player.gameprofile.id)
             {
-                let props_guard = p.gameprofile.properties.load();
-                data_to_process.push((props_guard, p));
+                // Java: signed Mojang textures. Bedrock: PNG we host for this viewer.
+                let properties = p.java_info_properties(player);
+                data_to_process.push((properties, p));
             }
 
             let mut current_player_data = Vec::new();
-            for (properties, player) in &data_to_process {
-                let chat_session = player
+            for (properties, other) in &data_to_process {
+                let chat_session = other
                     .chat_session
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let tab_list_name = player.get_tab_list_name();
+                let tab_list_name = other.get_tab_list_name();
 
                 let mut player_actions = vec![PlayerAction::AddPlayer {
-                    name: &player.gameprofile.name,
+                    name: &other.gameprofile.name,
                     properties,
                 }];
 
@@ -3528,23 +3515,23 @@ impl World {
                 }
 
                 player_actions.extend([
-                    PlayerAction::UpdateGameMode(VarInt(player.gamemode.load() as i32)),
-                    PlayerAction::UpdateListed(player.tab_list_listed.load(Ordering::Relaxed)),
+                    PlayerAction::UpdateGameMode(VarInt(other.gamemode.load() as i32)),
+                    PlayerAction::UpdateListed(other.tab_list_listed.load(Ordering::Relaxed)),
                     PlayerAction::UpdateLatency(VarInt(
-                        player.tab_list_latency.load(Ordering::Relaxed),
+                        other.tab_list_latency.load(Ordering::Relaxed),
                     )),
                     PlayerAction::UpdateListOrder(VarInt(
-                        player.tab_list_order.load(Ordering::Relaxed),
+                        other.tab_list_order.load(Ordering::Relaxed),
                     )),
                     PlayerAction::UpdateHat(true),
                 ]);
                 drop(chat_session);
 
-                current_player_data.push((&player.gameprofile.id, player_actions));
+                current_player_data.push((&other.gameprofile.id, player_actions));
 
                 // Collect tab_list_names for sending later
                 if tab_list_name.is_some() {
-                    players_tab_list_names.push((player.gameprofile.id, tab_list_name));
+                    players_tab_list_names.push((other.gameprofile.id, tab_list_name));
                 }
             }
 
@@ -3625,7 +3612,8 @@ impl World {
             },
         );
 
-        // Spawn players for our client.
+        // Spawn players for our client. Tab-list skins were already sent above;
+        // this only adds in-world actors and equipment.
         let id = player.gameprofile.id;
         for existing_player in self
             .players
@@ -3633,9 +3621,11 @@ impl World {
             .iter()
             .filter(|c| c.gameprofile.id != id)
         {
-            Self::with_player_list_entry(existing_player, |java, bedrock| {
-                player.client.try_enqueue_packet_editioned(java, bedrock);
-            });
+            if matches!(player.client.as_ref(), ClientPlatform::Bedrock(_)) {
+                Self::with_player_list_entry(existing_player, player, |java, bedrock| {
+                    player.client.try_enqueue_packet_editioned(java, bedrock);
+                });
+            }
 
             if client.version.load() >= JavaMinecraftVersion::V_1_21 {
                 let config = existing_player.config.load();
@@ -3999,25 +3989,55 @@ impl World {
         }
     }
 
-    async fn refresh_java_player_for_bedrock(&self, subject: &Player) {
-        if !matches!(subject.client.as_ref(), ClientPlatform::Java(_)) {
+    /// Re-bind this player's skin on every other Bedrock client.
+    ///
+    /// `RemoveActor` unbinds the geometry. A second `PlayerList` ADD is ignored
+    /// while the UUID is still listed, so unlist, then list with the original
+    /// `skin_id` (Java skins are Mojang texture URLs — do not rewrite them),
+    /// then `AddPlayer` if the viewer can currently see them.
+    pub fn restamp_bedrock_skin_for_viewers(&self, subject: &Player) {
+        let remove_list = subject.bedrock_player_list_remove();
+        let add_list = subject.bedrock_player_list();
+        let (_, add_player) = subject.bedrock_spawn_packets();
+        let tracked = self.entity_tracker.get_tracked_entity(subject.entity_id());
+
+        for recipient in self.players.load().iter() {
+            if recipient.gameprofile.id == subject.gameprofile.id {
+                continue;
+            }
+            let ClientPlatform::Bedrock(client) = recipient.client.as_ref() else {
+                continue;
+            };
+            client.try_enqueue_client_packet(&remove_list);
+            client.try_enqueue_client_packet(&add_list);
+            if tracked
+                .as_ref()
+                .is_some_and(|tracked| tracked.seen_by.contains(&recipient.gameprofile.id))
+            {
+                client.try_enqueue_client_packet(&add_player);
+            }
+        }
+    }
+
+    /// Bedrock death drops listed skins. Re-send the tab list, including the local
+    /// player, so a later `AddPlayer` can bind the texture.
+    fn restore_bedrock_player_list(&self, player: &Player) {
+        if !matches!(player.client.as_ref(), ClientPlatform::Bedrock(_)) {
             return;
         }
-
-        let (player_list, add_player) = subject.bedrock_spawn_packets();
-        let remove = CRemoveActor::new(VarLong(subject.entity_id().into()));
-
-        let Some(tracked) = self.entity_tracker.get_tracked_entity(subject.entity_id()) else {
-            return;
-        };
-        for recipient in self.players.load().iter() {
-            if tracked.seen_by.contains(&recipient.gameprofile.id)
-                && let ClientPlatform::Bedrock(client) = recipient.client.as_ref()
-            {
-                client.send_packet(&remove).await;
-                client.send_packet(&player_list).await;
-                client.send_packet(&add_player).await;
-            }
+        Self::with_player_list_entry(player, player, |java, bedrock| {
+            player.client.try_enqueue_packet_editioned(java, bedrock);
+        });
+        let id = player.gameprofile.id;
+        for existing in self
+            .players
+            .load()
+            .iter()
+            .filter(|p| p.gameprofile.id != id)
+        {
+            Self::with_player_list_entry(existing, player, |java, bedrock| {
+                player.client.try_enqueue_packet_editioned(java, bedrock);
+            });
         }
     }
 
@@ -4292,7 +4312,7 @@ impl World {
 
         // TODO: difficulty, exp bar, status effect
 
-        // Registered after positioning; a same-dimension respawn keeps its client entities.
+        // Registered after positioning; a same-dimension Java respawn keeps its client entities.
         if target_world.uuid == self.uuid {
             // Clients never remove a dead entity themselves, so viewers would keep the corpse.
             target_world
@@ -4312,7 +4332,16 @@ impl World {
         // Send teleport packet after at least the center chunk was delivered
         player.request_teleport(position, yaw, pitch);
 
-        target_world.refresh_java_player_for_bedrock(player).await;
+        // Bedrock wipes listed skins on the death screen. Re-list, then re-pair so
+        // `AddPlayer` follows `PlayerList`. Java keeps its already-spawned entities.
+        if matches!(player.client.as_ref(), ClientPlatform::Bedrock(_)) {
+            target_world.restore_bedrock_player_list(player);
+            target_world
+                .entity_tracker
+                .repair_respawned_player(player, &target_world);
+        }
+
+        target_world.restamp_bedrock_skin_for_viewers(player);
     }
 
     /// Returns true if enough players are sleeping and we should skip the night.
@@ -4768,10 +4797,11 @@ impl World {
     /// Tab-list add entry for `player` from its stored state, as Java and Bedrock packets.
     fn with_player_list_entry<R>(
         player: &Player,
+        viewer: &Player,
         f: impl FnOnce(&CPlayerInfoUpdate<'_>, &CPlayerList) -> R,
     ) -> R {
         let profile = &player.gameprofile;
-        let properties = profile.properties.load();
+        let properties = player.java_info_properties(viewer);
         let actions = [
             PlayerAction::AddPlayer {
                 name: &profile.name,
@@ -4796,16 +4826,23 @@ impl World {
     /// Publishes a player from another world -> tab list first, Java drops spawns without it.
     pub fn add_arriving_player(&self, player: &Arc<Player>) {
         let id = player.gameprofile.id;
-        Self::with_player_list_entry(player, |java, bedrock| {
-            self.broadcast_packet_except_editioned(&[id], java, bedrock);
-        });
+        for recipient in self
+            .players
+            .load()
+            .iter()
+            .filter(|p| p.gameprofile.id != id)
+        {
+            Self::with_player_list_entry(player, recipient, |java, bedrock| {
+                recipient.client.try_enqueue_packet_editioned(java, bedrock);
+            });
+        }
         for existing in self
             .players
             .load()
             .iter()
             .filter(|p| p.gameprofile.id != id)
         {
-            Self::with_player_list_entry(existing, |java, bedrock| {
+            Self::with_player_list_entry(existing, player, |java, bedrock| {
                 player.client.try_enqueue_packet_editioned(java, bedrock);
             });
         }

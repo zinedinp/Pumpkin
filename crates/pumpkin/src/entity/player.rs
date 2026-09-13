@@ -566,9 +566,146 @@ struct SkinMetadata {
     model: Option<String>,
 }
 
+fn apply_opaque_mask(rgba: &mut [u8], width: u32, height: u32) -> Option<()> {
+    let opaque_mask = BASE64_STANDARD
+        .decode(if height == 32 {
+            LEGACY_SKIN_OPAQUE_MASK
+        } else {
+            SKIN_OPAQUE_MASK
+        })
+        .ok()?;
+    for pixel_index in 0..(width * height) as usize {
+        if opaque_mask[pixel_index >> 3] & (1 << (pixel_index & 7)) != 0 {
+            rgba[pixel_index * 4 + 3] = u8::MAX;
+        }
+    }
+    Some(())
+}
+
+/// Vanilla `SkinTextureDownloader.processLegacySkin`: copy the 64x32 layout into
+/// a 64x64 sheet and mirror the right limbs onto the left-limb slots.
+fn upscale_legacy_skin(src: &[u8]) -> Vec<u8> {
+    const W: u32 = 64;
+    let mut dest = vec![0u8; 64 * 64 * 4];
+    dest[..src.len()].copy_from_slice(src);
+    // Right leg -> left leg
+    copy_rect_rgba(&mut dest, W, [4, 16], [20, 48], [4, 4], true, false);
+    copy_rect_rgba(&mut dest, W, [8, 16], [24, 48], [4, 4], true, false);
+    copy_rect_rgba(&mut dest, W, [0, 20], [24, 52], [4, 12], true, false);
+    copy_rect_rgba(&mut dest, W, [4, 20], [20, 52], [4, 12], true, false);
+    copy_rect_rgba(&mut dest, W, [8, 20], [16, 52], [4, 12], true, false);
+    copy_rect_rgba(&mut dest, W, [12, 20], [28, 52], [4, 12], true, false);
+    // Right arm -> left arm
+    copy_rect_rgba(&mut dest, W, [44, 16], [36, 48], [4, 4], true, false);
+    copy_rect_rgba(&mut dest, W, [48, 16], [40, 48], [4, 4], true, false);
+    copy_rect_rgba(&mut dest, W, [40, 20], [40, 52], [4, 12], true, false);
+    copy_rect_rgba(&mut dest, W, [44, 20], [36, 52], [4, 12], true, false);
+    copy_rect_rgba(&mut dest, W, [48, 20], [32, 52], [4, 12], true, false);
+    copy_rect_rgba(&mut dest, W, [52, 20], [44, 52], [4, 12], true, false);
+    dest
+}
+
+fn copy_rect_rgba(
+    buf: &mut [u8],
+    stride: u32,
+    src: [u32; 2],
+    dst: [u32; 2],
+    size: [u32; 2],
+    flip_x: bool,
+    flip_y: bool,
+) {
+    let [src_x, src_y] = src;
+    let [dst_x, dst_y] = dst;
+    let [width, height] = size;
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let src = ((src_y + y) * stride + (src_x + x)) as usize * 4;
+            let dst = ((y * width + x) * 4) as usize;
+            pixels[dst..dst + 4].copy_from_slice(&buf[src..src + 4]);
+        }
+    }
+    for y in 0..height {
+        for x in 0..width {
+            let dx = if flip_x { width - 1 - x } else { x };
+            let dy = if flip_y { height - 1 - y } else { y };
+            let dst = ((dst_y + dy) * stride + (dst_x + dx)) as usize * 4;
+            let src = ((y * width + x) * 4) as usize;
+            buf[dst..dst + 4].copy_from_slice(&pixels[src..src + 4]);
+        }
+    }
+}
+
+fn rgba_to_png(skin: &pumpkin_protocol::bedrock::client::Skin) -> Option<Bytes> {
+    let img = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+        skin.image_width,
+        skin.image_height,
+        skin.skin_data.clone(),
+    )?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .ok()?;
+    Some(Bytes::from(out.into_inner()))
+}
+
+fn java_skin_http_host(viewer: &Player) -> String {
+    let port = viewer
+        .world()
+        .server
+        .upgrade()
+        .map_or(25565, |s| s.advanced_config.networking.java.address.port());
+    let ClientPlatform::Java(java) = viewer.client.as_ref() else {
+        return format!("127.0.0.1:{port}");
+    };
+    let host = java.server_address.trim_end_matches('.').trim();
+    if host.is_empty() {
+        format!("127.0.0.1:{port}")
+    } else if host.contains(':') {
+        host.to_string()
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+#[cfg(test)]
+mod skin_tests {
+    use super::{copy_rect_rgba, upscale_legacy_skin};
+
+    fn pixel(buf: &[u8], x: u32, y: u32, stride: u32) -> [u8; 4] {
+        let i = ((y * stride + x) * 4) as usize;
+        buf[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn legacy_skin_is_copied_into_a_64x64_sheet() {
+        let mut src = vec![0u8; 64 * 32 * 4];
+        // Marker on the right-leg inner cuboid that vanilla mirrors onto the left leg.
+        let i = ((16 * 64 + 4) * 4) as usize;
+        src[i..i + 4].copy_from_slice(&[10, 20, 30, 40]);
+
+        let dest = upscale_legacy_skin(&src);
+        assert_eq!(dest.len(), 64 * 64 * 4);
+        assert_eq!(&dest[..src.len()], src.as_slice());
+        assert_eq!(pixel(&dest, 4, 16, 64), [10, 20, 30, 40]);
+        // flipX of a 4-wide copy from x=4 onto dest x=20 places this pixel at x=23.
+        assert_eq!(pixel(&dest, 23, 48, 64), [10, 20, 30, 40]);
+    }
+
+    #[test]
+    fn copy_rect_flips_on_x() {
+        let mut buf = vec![0u8; 8 * 8 * 4];
+        buf[0..4].copy_from_slice(&[1, 2, 3, 4]);
+        copy_rect_rgba(&mut buf, 8, [0, 0], [4, 0], [2, 1], true, false);
+        assert_eq!(pixel(&buf, 5, 0, 8), [1, 2, 3, 4]);
+    }
+}
+
 impl Player {
-    #[must_use]
-    pub fn fetch_skin(properties: &[Property]) -> Option<pumpkin_protocol::bedrock::client::Skin> {
+    /// Downloads a Java textures-property skin and converts it for Bedrock viewers.
+    pub async fn fetch_skin(
+        properties: &[Property],
+    ) -> Option<pumpkin_protocol::bedrock::client::Skin> {
         let textures_prop = properties.iter().find(|p| &*p.name == "textures")?;
         let decoded = BASE64_STANDARD
             .decode(textures_prop.value.as_bytes())
@@ -582,19 +719,14 @@ impl Player {
             .and_then(|m| m.model.as_deref())
             .is_some_and(|model| model == "slim");
 
-        let bytes = if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            tokio::task::block_in_place(|| {
-                handle.block_on(async {
-                    let client = pumpkin_auth::client();
-                    client.get(&url).send().await.ok()?.bytes().await.ok()
-                })
-            })?
-        } else {
-            tokio::runtime::Runtime::new().ok()?.block_on(async {
-                let client = pumpkin_auth::client();
-                client.get(&url).send().await.ok()?.bytes().await.ok()
-            })?
-        };
+        let bytes = pumpkin_auth::client()
+            .get(&url)
+            .send()
+            .await
+            .ok()?
+            .bytes()
+            .await
+            .ok()?;
         let img = image::load_from_memory(&bytes).ok()?;
 
         let width = img.width();
@@ -605,19 +737,13 @@ impl Player {
         }
 
         let mut rgba = img.into_rgba8().into_raw();
-
-        let opaque_mask = BASE64_STANDARD
-            .decode(if height == 32 {
-                LEGACY_SKIN_OPAQUE_MASK
-            } else {
-                SKIN_OPAQUE_MASK
-            })
-            .ok()?;
-        for pixel_index in 0..(width * height) as usize {
-            if opaque_mask[pixel_index >> 3] & (1 << (pixel_index & 7)) != 0 {
-                rgba[pixel_index * 4 + 3] = u8::MAX;
-            }
-        }
+        apply_opaque_mask(&mut rgba, width, height)?;
+        let (width, height, mut rgba) = if height == 32 {
+            (64, 64, upscale_legacy_skin(&rgba))
+        } else {
+            (width, height, rgba)
+        };
+        apply_opaque_mask(&mut rgba, width, height)?;
 
         let mut skin = pumpkin_protocol::bedrock::client::Skin::steve();
         skin.set_slim(is_slim);
@@ -629,8 +755,38 @@ impl Player {
         Some(skin)
     }
 
+    /// Gather pixels once from Java textures or Bedrock login. Distribution
+    /// to each edition happens later (`java_info_properties` / `bedrock_player_list`).
+    async fn gather_skin(
+        client: &ClientPlatform,
+        properties: &[Property],
+        player_uuid: uuid::Uuid,
+    ) -> pumpkin_protocol::bedrock::client::Skin {
+        let mut skin = match client {
+            ClientPlatform::Bedrock(bedrock) => bedrock
+                .client_data
+                .load()
+                .as_ref()
+                .as_ref()
+                .and_then(|data| pumpkin_protocol::bedrock::client::Skin::from_client_data(data))
+                .unwrap_or_else(pumpkin_protocol::bedrock::client::Skin::steve),
+            ClientPlatform::Java(_) => Self::fetch_skin(properties)
+                .await
+                .unwrap_or_else(pumpkin_protocol::bedrock::client::Skin::steve),
+        };
+
+        // Standard_Custom is a shared placeholder. Give fallback skins a stable,
+        // per-player identity so Bedrock never sees duplicate skin IDs.
+        if skin.skin_id.is_empty() || skin.skin_id == "Standard_Custom" {
+            let skin_id = format!("pumpkin:{player_uuid}");
+            skin.skin_id.clone_from(&skin_id);
+            skin.full_id = skin_id;
+        }
+        skin
+    }
+
     #[expect(clippy::too_many_lines, clippy::items_after_statements)]
-    pub fn new(
+    pub async fn new(
         client: Arc<ClientPlatform>,
         gameprofile: GameProfile,
         config: PlayerConfig,
@@ -699,15 +855,11 @@ impl Player {
         abilities.set_for_gamemode(gamemode);
 
         let properties = gameprofile.properties.load();
-        let mut bedrock_skin = Self::fetch_skin(&properties)
-            .unwrap_or_else(pumpkin_protocol::bedrock::client::Skin::steve);
-
-        // Standard_Custom is a shared placeholder. Give fallback skins a stable,
-        // per-player identity so Bedrock never sees duplicate skin IDs.
-        if bedrock_skin.skin_id == "Standard_Custom" {
-            let skin_id = format!("pumpkin:{player_uuid}");
-            bedrock_skin.skin_id.clone_from(&skin_id);
-            bedrock_skin.full_id = skin_id;
+        let bedrock_skin = Self::gather_skin(&client, &properties, player_uuid).await;
+        if matches!(client.as_ref(), ClientPlatform::Bedrock(_))
+            && let Some(png) = rgba_to_png(&bedrock_skin)
+        {
+            server.java_skin_pngs.insert(player_uuid, png);
         }
 
         let supports_player_loaded = match client.as_ref() {
@@ -1023,6 +1175,70 @@ impl Player {
                 player_color: [0; 4],
             }],
         }
+    }
+
+    /// Unlist so a following `ACTION_ADD` is treated as a fresh skin bind.
+    #[must_use]
+    pub fn bedrock_player_list_remove(&self) -> CPlayerList {
+        CPlayerList {
+            action: CPlayerList::ACTION_REMOVE,
+            entries: vec![PlayerListEntry {
+                uuid: self.gameprofile.id,
+                entity_unique_id: VarLong(i64::from(self.entity_id())),
+                username: self.gameprofile.name.clone(),
+                xuid: String::new(),
+                platform_chat_id: String::new(),
+                build_platform: BuildPlatform::Unknown,
+                skin: pumpkin_protocol::bedrock::client::Skin::steve(),
+                is_teacher: false,
+                is_host: false,
+                is_sub_client: false,
+                player_color: [0; 4],
+            }],
+        }
+    }
+
+    /// Java tab-list `textures` for `viewer`.
+    ///
+    /// Signed Mojang properties are used as-is (Java seeing Java). Only when
+    /// those are missing (Bedrock login) do we point at the PNG we host.
+    #[must_use]
+    pub fn java_info_properties(&self, viewer: &Self) -> Vec<Property> {
+        let stored = self.gameprofile.properties.load();
+        if stored.iter().any(|property| &*property.name == "textures") {
+            return (**stored).clone();
+        }
+        let has_png = self
+            .world()
+            .server
+            .upgrade()
+            .is_some_and(|server| server.java_skin_pngs.contains_key(&self.gameprofile.id));
+        if !has_png {
+            return (**stored).clone();
+        }
+        let host = java_skin_http_host(viewer);
+        let slim = self
+            .bedrock_skin
+            .load()
+            .arm_size
+            .eq_ignore_ascii_case("slim");
+        let mut skin = serde_json::json!({
+            "url": format!("http://{host}/skin/{}.png", self.gameprofile.id),
+        });
+        if slim && let Some(obj) = skin.as_object_mut() {
+            obj.insert("metadata".into(), serde_json::json!({ "model": "slim" }));
+        }
+        let payload = serde_json::json!({
+            "timestamp": 0u64,
+            "profileId": self.gameprofile.id.as_simple().to_string(),
+            "profileName": self.gameprofile.name,
+            "textures": { "SKIN": skin },
+        });
+        vec![Property {
+            name: "textures".into(),
+            value: BASE64_STANDARD.encode(payload.to_string()).into(),
+            signature: None,
+        }]
     }
 
     /// Bedrock remote-player spawn -> the `PlayerList` entry must precede `AddPlayer`.
@@ -4685,6 +4901,8 @@ impl Player {
         self.send_combat_death(death_msg);
         self.send_health();
         self.send_bedrock_respawn_state(RespawnState::SearchingForSpawn);
+        // ActorEvent Death unbinds custom geometry on Bedrock; keep the listed Java skin.
+        self.world().restamp_bedrock_skin_for_viewers(self);
     }
 
     pub fn set_gamemode(self: &Arc<Self>, gamemode: GameMode) -> bool {

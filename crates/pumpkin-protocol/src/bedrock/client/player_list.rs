@@ -1,7 +1,9 @@
 use crate::{
+    bedrock::server::login::ClientData,
     codec::{var_long::VarLong, var_uint::VarUInt},
     serial::PacketWrite,
 };
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pumpkin_macros::packet;
 use std::io::{Error, Write};
 use uuid::Uuid;
@@ -155,6 +157,152 @@ impl Skin {
         }
         .to_vec();
     }
+
+    /// Builds the `PlayerList` skin from a Bedrock login JWT. Missing or truncated
+    /// image data returns `None` so the caller can fall back to Steve.
+    #[must_use]
+    pub fn from_client_data(data: &ClientData) -> Option<Self> {
+        let skin_data = decode_b64(&data.skin_data);
+        let (image_width, image_height) =
+            rgba_dimensions(&skin_data, data.skin_image_width, data.skin_image_height)?;
+
+        let mut skin = Self::steve();
+        skin.set_slim(data.arm_size.eq_ignore_ascii_case("slim"));
+
+        if let Some(patch) = decode_text_field(&data.skin_resource_patch) {
+            skin.resource_patch = patch;
+        }
+        if let Some(geometry) = decode_text_field(&data.skin_geometry) {
+            skin.geometry_data = geometry;
+        }
+        if !data.skin_geometry_version.is_empty() {
+            skin.geometry_data_engine_version = data.skin_geometry_version.as_bytes().to_vec();
+        }
+
+        let cape_data = decode_b64(&data.cape_data);
+        let (cape_width, cape_height) = if cape_data.is_empty() {
+            (0, 0)
+        } else {
+            rgba_dimensions(&cape_data, data.cape_image_width, data.cape_image_height).unwrap_or((
+                data.cape_image_width.max(0) as u32,
+                data.cape_image_height.max(0) as u32,
+            ))
+        };
+
+        skin.skin_id.clone_from(&data.skin_id);
+        skin.play_fab_id.clone_from(&data.play_fab_id);
+        skin.image_width = image_width;
+        skin.image_height = image_height;
+        skin.skin_data = skin_data;
+        skin.animations = data
+            .animated_image_data
+            .iter()
+            .filter_map(SkinAnimation::from_login)
+            .collect();
+        skin.cape_width = cape_width;
+        skin.cape_height = cape_height;
+        skin.cape_data = cape_data;
+        skin.animation_data = data.skin_animation_data.as_bytes().to_vec();
+        skin.cape_id.clone_from(&data.cape_id);
+        skin.full_id = if data.cape_id.is_empty() {
+            data.skin_id.clone()
+        } else {
+            format!("{}{}", data.skin_id, data.cape_id)
+        };
+        if !data.skin_colour.is_empty() {
+            skin.skin_color.clone_from(&data.skin_colour);
+        }
+        skin.persona_pieces = data
+            .persona_pieces
+            .iter()
+            .map(PersonaPiece::from_login)
+            .collect();
+        skin.piece_tint_colors = data
+            .piece_tint_colours
+            .iter()
+            .map(PieceTintColor::from_login)
+            .collect();
+        skin.is_premium = data.premium_skin;
+        skin.is_persona = data.persona_skin;
+        skin.persona_cape_on_classic = data.cape_on_classic_skin;
+        // Viewers drop untrusted skins. Login already proved this is the player's own data.
+        skin.is_trusted = true;
+        skin.override_appearance = true;
+        Some(skin)
+    }
+}
+
+fn decode_b64(value: &str) -> Vec<u8> {
+    BASE64_STANDARD
+        .decode(value.trim().as_bytes())
+        .unwrap_or_default()
+}
+
+fn decode_text_field(value: &str) -> Option<Vec<u8>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(
+        BASE64_STANDARD
+            .decode(trimmed.as_bytes())
+            .unwrap_or_else(|_| trimmed.as_bytes().to_vec()),
+    )
+}
+
+const fn rgba_dimensions(data: &[u8], width: i32, height: i32) -> Option<(u32, u32)> {
+    if data.len() < 64 * 32 * 4 || !data.len().is_multiple_of(4) {
+        return None;
+    }
+    let pixels = data.len() / 4;
+    if width > 0 && height > 0 && width as usize * height as usize == pixels {
+        return Some((width as u32, height as u32));
+    }
+    match pixels {
+        8192 => Some((64, 32)),
+        16384 => Some((64, 64)),
+        65536 => Some((128, 128)),
+        _ => None,
+    }
+}
+
+fn persona_piece_type(name: &str) -> i32 {
+    let name = name
+        .strip_prefix("persona_")
+        .unwrap_or(name)
+        .replace('-', "_");
+    match name.to_ascii_lowercase().as_str() {
+        "skeleton" => 1,
+        "body" => 2,
+        "skin" => 3,
+        "bottom" => 4,
+        "feet" => 5,
+        "dress" => 6,
+        "top" => 7,
+        "high_pants" | "highpants" => 8,
+        "hands" | "hand" => 9,
+        "outerwear" => 10,
+        "facial_hair" | "facialhair" => 11,
+        "mouth" => 12,
+        "eyes" => 13,
+        "hair" => 14,
+        "hood" => 15,
+        "back" => 16,
+        "face_accessory" | "faceaccessory" => 17,
+        "head" => 18,
+        "legs" => 19,
+        "left_leg" | "leftleg" => 20,
+        "right_leg" | "rightleg" => 21,
+        "arms" => 22,
+        "left_arm" | "leftarm" => 23,
+        "right_arm" | "rightarm" => 24,
+        "capes" | "cape" => 25,
+        "classic_skin" | "classicskin" => 26,
+        "emote" => 27,
+        "coco" => 28,
+        "unsupported" => 29,
+        _ => 0,
+    }
 }
 
 impl PacketWrite for Skin {
@@ -213,6 +361,22 @@ pub struct SkinAnimation {
     pub expression_type: u32,
 }
 
+impl SkinAnimation {
+    fn from_login(anim: &crate::bedrock::server::login::SkinAnimation) -> Option<Self> {
+        let image_data = decode_b64(&anim.image);
+        let (image_width, image_height) =
+            rgba_dimensions(&image_data, anim.image_width, anim.image_height)?;
+        Some(Self {
+            image_width,
+            image_height,
+            image_data,
+            animation_type: anim.animation_type.max(0) as u32,
+            frames: anim.frames as f32,
+            expression_type: anim.animation_expression.max(0) as u32,
+        })
+    }
+}
+
 impl PacketWrite for SkinAnimation {
     fn write<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
         self.image_width.write(writer)?;
@@ -234,10 +398,31 @@ pub struct PersonaPiece {
     pub product_id: String,
 }
 
+impl PersonaPiece {
+    fn from_login(piece: &crate::bedrock::server::login::PersonaPiece) -> Self {
+        Self {
+            piece_id: piece.piece_id.clone(),
+            piece_type: persona_piece_type(&piece.piece_type),
+            pack_id: Uuid::parse_str(&piece.pack_id).unwrap_or(Uuid::nil()),
+            is_default: piece.is_default,
+            product_id: piece.product_id.clone(),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct PieceTintColor {
     pub piece_type: String,
     pub colors: [i32; 4],
+}
+
+impl PieceTintColor {
+    fn from_login(tint: &crate::bedrock::server::login::PersonaPieceTintColour) -> Self {
+        Self {
+            piece_type: tint.piece_type.clone(),
+            colors: tint.colours.each_ref().map(|color| parse_color(color)),
+        }
+    }
 }
 
 impl PacketWrite for PieceTintColor {
@@ -264,7 +449,11 @@ fn parse_color(color: &str) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_SKIN_GEOMETRY, SLIM_SKIN_RESOURCE_PATCH, Skin, WIDE_SKIN_RESOURCE_PATCH};
+    use super::{
+        BASE64_STANDARD, DEFAULT_SKIN_GEOMETRY, SLIM_SKIN_RESOURCE_PATCH, Skin,
+        WIDE_SKIN_RESOURCE_PATCH, persona_piece_type,
+    };
+    use base64::Engine;
 
     #[test]
     fn fallback_skin_contains_the_geometry_it_references() {
@@ -291,5 +480,73 @@ mod tests {
             String::from_utf8_lossy(&skin.geometry_data)
                 .contains(r#""identifier":"geometry.humanoid.customSlim""#)
         );
+    }
+
+    #[test]
+    fn client_data_skin_keeps_login_pixels_and_slim_geometry() {
+        let pixels = vec![1u8; 64 * 64 * 4];
+        let json = serde_json::json!({
+            "ClientRandomId": 0,
+            "DeviceOS": 1,
+            "DeviceId": "dev",
+            "GameVersion": "1.26.45",
+            "LanguageCode": "en_US",
+            "CurrentInputMode": 1,
+            "DefaultInputMode": 1,
+            "UIProfile": 0,
+            "ServerAddress": "127.0.0.1",
+            "MaxViewDistance": 12,
+            "SkinId": "custom-slim",
+            "SkinData": BASE64_STANDARD.encode(&pixels),
+            "SkinImageWidth": 64,
+            "SkinImageHeight": 64,
+            "ArmSize": "slim",
+            "CapeId": "cape-1",
+            "PlayFabId": "pf",
+            "PersonaSkin": false,
+            "PremiumSkin": true,
+            "SkinGeometryData": BASE64_STANDARD.encode(br#"{"minecraft:geometry":[]}"#),
+        });
+        let data: crate::bedrock::server::login::ClientData =
+            serde_json::from_value(json).expect("client data");
+        let skin = Skin::from_client_data(&data).expect("skin");
+
+        assert_eq!(skin.skin_id, "custom-slim");
+        assert_eq!(skin.full_id, "custom-slimcape-1");
+        assert_eq!(skin.play_fab_id, "pf");
+        assert_eq!(skin.arm_size, "slim");
+        assert_eq!(skin.resource_patch, SLIM_SKIN_RESOURCE_PATCH);
+        assert_eq!(skin.skin_data, pixels);
+        assert_eq!(skin.geometry_data, br#"{"minecraft:geometry":[]}"#);
+        assert!(skin.is_trusted);
+        assert!(skin.override_appearance);
+        assert!(skin.is_premium);
+    }
+
+    #[test]
+    fn empty_login_skin_falls_back() {
+        let json = serde_json::json!({
+            "ClientRandomId": 0,
+            "DeviceOS": 1,
+            "DeviceId": "dev",
+            "GameVersion": "1.26.45",
+            "LanguageCode": "en_US",
+            "CurrentInputMode": 1,
+            "DefaultInputMode": 1,
+            "UIProfile": 0,
+            "ServerAddress": "127.0.0.1",
+            "MaxViewDistance": 12,
+        });
+        let data: crate::bedrock::server::login::ClientData =
+            serde_json::from_value(json).expect("client data");
+        assert!(Skin::from_client_data(&data).is_none());
+    }
+
+    #[test]
+    fn persona_piece_names_map_to_protocol_values() {
+        assert_eq!(persona_piece_type("persona_hair"), 14);
+        assert_eq!(persona_piece_type("persona_hands"), 9);
+        assert_eq!(persona_piece_type("classic_skin"), 26);
+        assert_eq!(persona_piece_type("nope"), 0);
     }
 }

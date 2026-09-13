@@ -573,6 +573,16 @@ impl PumpkinServer {
                         let server_clone = self.server.clone();
 
                         tasks.spawn(async move {
+                            let connection = match crate::net::java::skin_http::maybe_serve(
+                                connection,
+                                &server_clone,
+                            )
+                            .await
+                            {
+                                Ok(Some(stream)) => stream,
+                                Ok(None) => return,
+                                Err(_) => return,
+                            };
                             let packet_limiter = PacketRateLimiter::from_config(
                                 &server_clone.advanced_config.networking.java.packet_limiter,
                             );
@@ -594,6 +604,7 @@ impl PumpkinServer {
 
                                      if let Some((player, world)) = server_clone
                                          .add_player(Arc::new(ClientPlatform::Java(java_client)), profile, Some(config))
+                                         .await
                                  {
 
                                      if let ClientPlatform::Java(client) = player.client.as_ref() {
@@ -708,11 +719,14 @@ impl PumpkinServer {
                     client.await_tasks().await;
                 }
                 PacketHandlerResult::ReadyToPlay(profile, config) => {
-                    if let Some((player, _world)) = server.add_player(
-                        Arc::new(ClientPlatform::Bedrock(client.clone())),
-                        profile,
-                        Some(config),
-                    ) {
+                    if let Some((player, _world)) = server
+                        .add_player(
+                            Arc::new(ClientPlatform::Bedrock(client.clone())),
+                            profile,
+                            Some(config),
+                        )
+                        .await
+                    {
                         client.set_player(player.clone());
                         client.progress_player_packets(&player).await;
                         client.close().await;

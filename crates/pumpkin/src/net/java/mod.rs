@@ -60,6 +60,7 @@ pub mod login;
 pub mod pending;
 pub mod play;
 pub mod recipe_helper;
+pub mod skin_http;
 pub mod status;
 
 pub use chunk_data::{CChunkData, ChunkLightExt};

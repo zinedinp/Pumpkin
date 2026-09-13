@@ -29,6 +29,8 @@ use pumpkin_world::generation::generator::GeneratorInit;
 use pumpkin_world::world::WorldPortalExt;
 use tracing::{debug, error, info, warn};
 
+use bytes::Bytes;
+use dashmap::DashMap;
 use pumpkin_protocol::java::client::login::CEncryptionRequest;
 use pumpkin_protocol::java::client::play::{CChangeDifficulty, CTabList};
 use pumpkin_protocol::{ClientPacket, java::client::config::CPluginMessage};
@@ -49,6 +51,7 @@ use std::{future::Future, sync::atomic::Ordering, time::Duration};
 use tokio::sync::OnceCell;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
+use uuid::Uuid;
 
 mod connection_cache;
 pub(crate) mod debug_profiler;
@@ -147,6 +150,8 @@ pub struct Server {
     pub task_scheduler: Arc<TaskScheduler>,
     /// Manages scheduled datapack functions (`/schedule`)
     pub scheduled_functions: Arc<crate::server::scheduler::ScheduledFunctionQueue>,
+    /// Bedrock skins encoded as PNG for Java clients (`GET /skin/<uuid>.png`).
+    pub java_skin_pngs: DashMap<Uuid, Bytes>,
     tasks: TaskTracker,
     pub runtime: tokio::runtime::Handle,
 
@@ -319,6 +324,7 @@ impl Server {
             runtime: tokio::runtime::Handle::current(),
             task_scheduler: Arc::new(TaskScheduler::new()),
             scheduled_functions: Arc::new(crate::server::scheduler::ScheduledFunctionQueue::new()),
+            java_skin_pngs: DashMap::new(),
             server_guid: rand::random(),
             player_idle_timeout: AtomicI32::new(0),
             mojang_public_keys: ArcSwap::from_pointee(Vec::new()),
@@ -636,7 +642,7 @@ impl Server {
     /// # Note
     ///
     /// You still have to spawn the `Player` in a `World` to let them join and make them visible.
-    pub fn add_player(
+    pub async fn add_player(
         self: &Arc<Self>,
         client: Arc<ClientPlatform>,
         profile: GameProfile,
@@ -674,7 +680,8 @@ impl Server {
             config.clone().unwrap_or_default(),
             &world,
             gamemode,
-        );
+        )
+        .await;
 
         if let Some(mut nbt_data) = nbt {
             player.read_nbt(&mut nbt_data);
@@ -739,6 +746,7 @@ impl Server {
             pumpkin_data::statistic::CustomStatistic::LeaveGame as i32,
             1,
         );
+        self.java_skin_pngs.remove(&player.gameprofile.id);
         // TODO: Config if we want decrease online
         self.listing
             .lock()
