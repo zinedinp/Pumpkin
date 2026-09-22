@@ -5,7 +5,7 @@
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -26,7 +26,8 @@ use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::net::decrement_pending_bytes;
+use super::write_progress::{STALL_TIMEOUT, WriteProgress};
+use crate::net::PendingBytes;
 
 /// No barrier pending.
 const NO_BARRIER: u64 = u64::MAX;
@@ -276,12 +277,32 @@ async fn frame_batch_maybe_offload<W: AsyncWrite + Unpin + Send + 'static>(
 }
 
 /// Shared, never mutated by the writer loop.
-struct WriterCtx {
-    close_token: CancellationToken,
-    suspend_flushing: Arc<AtomicBool>,
-    tick_flush: TickFlush,
-    pending_bytes: Arc<AtomicUsize>,
-    id: u64,
+pub struct WriterCtx {
+    pub close_token: CancellationToken,
+    pub suspend_flushing: Arc<AtomicBool>,
+    pub tick_flush: TickFlush,
+    pub pending_bytes: Arc<PendingBytes>,
+    pub progress: WriteProgress,
+    pub id: u64,
+}
+
+impl WriterCtx {
+    /// Socket I/O. `None` on close or stall: no progress for `STALL_TIMEOUT`.
+    async fn io<F: Future>(&self, fut: F) -> Option<F::Output> {
+        self.progress.touch();
+        tokio::select! {
+            biased;
+            () = self.close_token.cancelled() => None,
+            () = self.progress.stalled() => {
+                warn!(
+                    "Client {} stalled: no bytes written for {STALL_TIMEOUT:?}. Closing connection.",
+                    self.id
+                );
+                None
+            }
+            res = fut => Some(res),
+        }
+    }
 }
 
 /// Write state between two TCP flushes.
@@ -307,12 +328,7 @@ impl FlushState {
     ) -> Option<bool> {
         let did_flush = self.unflushed;
         if did_flush {
-            let flushed = tokio::select! {
-                biased;
-                () = ctx.close_token.cancelled() => None,
-                res = writer.flush() => Some(res),
-            };
-            match flushed {
+            match ctx.io(writer.flush()).await {
                 Some(Ok(())) => {}
                 Some(Err(err)) => {
                     if !ctx.close_token.is_cancelled() {
@@ -320,7 +336,7 @@ impl FlushState {
                     }
                     return None;
                 }
-                // close() during a stalled flush. Drop it instead of hanging here.
+                // Closed or stalled. Drop the flush instead of hanging here.
                 None => return None,
             }
             self.unflushed = false;
@@ -453,15 +469,19 @@ async fn write_queued_frames<W: AsyncWrite + Unpin + Send + 'static>(
             return None;
         }
 
-        if let Err(err) = writer.write_frame(&frame).await {
-            if !close_token.is_cancelled() {
-                warn!("Failed to send packet batch to client {id}: {err}");
+        match ctx.io(writer.write_frame(&frame)).await {
+            Some(Ok(())) => {}
+            Some(Err(err)) => {
+                if !close_token.is_cancelled() {
+                    warn!("Failed to send packet batch to client {id}: {err}");
+                }
+                return None;
             }
-            return None;
+            None => return None,
         }
 
         let written_bytes: usize = returned_batch.iter().map(|packet| packet.data.len()).sum();
-        decrement_pending_bytes(&ctx.pending_bytes, written_bytes);
+        ctx.pending_bytes.release(written_bytes);
 
         // The frame is in the `BufWriter`, so release before the independent TCP flush.
         for packet in returned_batch {
@@ -477,19 +497,8 @@ async fn write_queued_frames<W: AsyncWrite + Unpin + Send + 'static>(
 pub async fn run_outgoing_packet_writer<W: AsyncWrite + Unpin + Send + 'static>(
     mut packet_receiver: Receiver<OutgoingPacket>,
     mut writer: TCPNetworkEncoder<W>,
-    close_token: CancellationToken,
-    suspend_flushing: Arc<AtomicBool>,
-    tick_flush: TickFlush,
-    pending_bytes: Arc<AtomicUsize>,
-    id: u64,
+    ctx: WriterCtx,
 ) {
-    let ctx = WriterCtx {
-        close_token,
-        suspend_flushing,
-        tick_flush,
-        pending_bytes,
-        id,
-    };
     let mut state = FlushState::new();
     // Packets taken off the FIFO. Matched against a deferred barrier's position.
     let mut received = 0u64;
@@ -553,9 +562,8 @@ pub async fn run_outgoing_packet_writer<W: AsyncWrite + Unpin + Send + 'static>(
         }
     }
 
-    // Stalled flush already raced close_token above. No second hang here.
     if !ctx.close_token.is_cancelled() {
-        let _ = writer.flush().await;
+        let _ = ctx.io(writer.flush()).await;
     }
 }
 
@@ -563,6 +571,7 @@ pub async fn run_outgoing_packet_writer<W: AsyncWrite + Unpin + Send + 'static>(
 mod tests {
     use super::*;
     use std::pin::Pin;
+    use std::sync::atomic::AtomicUsize;
     use std::task::{Context, Poll};
     struct RecordingWriter {
         writes: Arc<std::sync::Mutex<Vec<u8>>>,
@@ -646,6 +655,17 @@ mod tests {
         }
     }
 
+    fn ctx(close: CancellationToken, suspend: Arc<AtomicBool>, tick_flush: TickFlush) -> WriterCtx {
+        WriterCtx {
+            close_token: close,
+            suspend_flushing: suspend,
+            tick_flush,
+            pending_bytes: Arc::new(PendingBytes::default()),
+            progress: WriteProgress::new(),
+            id: 0,
+        }
+    }
+
     fn packet(n: u8) -> OutgoingPacket {
         OutgoingPacket::normal(Bytes::from(vec![n]))
     }
@@ -660,11 +680,7 @@ mod tests {
         run_outgoing_packet_writer(
             rx,
             TCPNetworkEncoder::new(RecordingWriter { writes, flushes }),
-            close,
-            suspend,
-            TickFlush::new(),
-            Arc::new(AtomicUsize::new(0)),
-            0,
+            ctx(close, suspend, TickFlush::new()),
         )
         .await;
     }
@@ -680,11 +696,7 @@ mod tests {
         run_outgoing_packet_writer(
             rx,
             TCPNetworkEncoder::new(RecordingWriter { writes, flushes }),
-            close,
-            suspend,
-            tick_flush,
-            Arc::new(AtomicUsize::new(0)),
-            0,
+            ctx(close, suspend, tick_flush),
         )
         .await;
     }
@@ -829,11 +841,11 @@ mod tests {
             TCPNetworkEncoder::new(StalledFlushWriter {
                 flush_polls: flush_polls.clone(),
             }),
-            close.clone(),
-            Arc::new(AtomicBool::new(false)),
-            TickFlush::new(),
-            Arc::new(AtomicUsize::new(0)),
-            0,
+            ctx(
+                close.clone(),
+                Arc::new(AtomicBool::new(false)),
+                TickFlush::new(),
+            ),
         ));
 
         let (done_tx, done_rx) = oneshot::channel();
@@ -860,6 +872,77 @@ mod tests {
             .await
             .expect("writer task must observe close_token while the TCP flush is stalled")
             .unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_socket_closes_after_stall_timeout() {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let close = CancellationToken::new();
+
+        let writer = tokio::spawn(run_outgoing_packet_writer(
+            rx,
+            TCPNetworkEncoder::new(StalledFlushWriter {
+                flush_polls: Arc::new(AtomicUsize::new(0)),
+            }),
+            ctx(
+                close.clone(),
+                Arc::new(AtomicBool::new(false)),
+                TickFlush::new(),
+            ),
+        ));
+
+        tx.try_send(packet(1)).unwrap();
+        tx.try_send(OutgoingPacket::Flush).unwrap();
+
+        tokio::time::timeout(STALL_TIMEOUT + Duration::from_secs(1), writer)
+            .await
+            .expect("stalled flush must end the writer after STALL_TIMEOUT")
+            .unwrap();
+        assert!(close.is_cancelled(), "stall must close the connection");
+    }
+
+    /// Socket takes 64 bytes every half `STALL_TIMEOUT`: slow, never stalled.
+    #[tokio::test(start_paused = true)]
+    async fn slow_socket_is_not_a_stall() {
+        use crate::net::java::write_progress::ProgressWriter;
+        use tokio::io::AsyncReadExt;
+
+        const PAYLOAD: usize = 2000;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let close = CancellationToken::new();
+        let (socket, mut peer) = tokio::io::duplex(64);
+        let writer_ctx = ctx(
+            close.clone(),
+            Arc::new(AtomicBool::new(false)),
+            TickFlush::new(),
+        );
+
+        let writer = tokio::spawn(run_outgoing_packet_writer(
+            rx,
+            TCPNetworkEncoder::new(ProgressWriter::new(socket, writer_ctx.progress.clone())),
+            writer_ctx,
+        ));
+
+        tx.try_send(OutgoingPacket::normal(Bytes::from(vec![7; PAYLOAD])))
+            .unwrap();
+        tx.try_send(OutgoingPacket::Flush).unwrap();
+
+        let mut read = 0;
+        let mut buf = [0u8; 64];
+        while read < PAYLOAD {
+            tokio::time::sleep(STALL_TIMEOUT / 2).await;
+            read += peer.read(&mut buf).await.unwrap();
+        }
+        assert!(
+            !close.is_cancelled(),
+            "progress every {:?} is slow, not stalled",
+            STALL_TIMEOUT / 2
+        );
+
+        drop(tx);
+        close.cancel();
+        writer.await.unwrap();
     }
 
     #[tokio::test]
@@ -1030,12 +1113,8 @@ mod tests {
                 written: written.clone(),
                 flush_marks: flush_marks.clone(),
             }),
-            close.clone(),
             // Suspended, so only the barrier can flush.
-            Arc::new(AtomicBool::new(true)),
-            tick_flush,
-            Arc::new(AtomicUsize::new(0)),
-            0,
+            ctx(close.clone(), Arc::new(AtomicBool::new(true)), tick_flush),
         ));
 
         tokio::time::sleep(Duration::from_millis(20)).await;

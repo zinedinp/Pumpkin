@@ -3,7 +3,7 @@ use pumpkin_protocol::java::client::play::{
 };
 use pumpkin_world::level::SyncChunk;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{io::Write, sync::Arc};
 
@@ -39,11 +39,7 @@ use pumpkin_protocol::{
 };
 use pumpkin_util::text::TextComponent;
 use pumpkin_util::version::JavaMinecraftVersion;
-use tokio::{
-    io::{BufReader, BufWriter},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-    sync::oneshot,
-};
+use tokio::{io::BufReader, net::tcp::OwnedReadHalf, sync::oneshot};
 use tokio::{
     sync::mpsc::{Receiver, Sender},
     task::JoinHandle,
@@ -60,21 +56,20 @@ pub mod pending;
 pub mod play;
 pub mod recipe_helper;
 pub mod status;
+mod write_progress;
 
 pub use chunk_data::{CChunkData, ChunkLightExt};
 use outgoing::{
-    BarrierPlacement, OUTGOING_QUEUE_CAPACITY, OutgoingPacket, TickFlush,
+    BarrierPlacement, OUTGOING_QUEUE_CAPACITY, OutgoingPacket, TickFlush, WriterCtx,
     run_outgoing_packet_writer,
 };
+use write_progress::{JavaWriteHalf, WriteProgress};
 
 use arc_swap::ArcSwap;
 use pending::PendingConnection;
 
 use crate::entity::player::Player;
-use crate::net::{
-    ClientPlatform, GameProfile, MAX_PENDING_BYTES, PacketRateLimiter, PlayerConfig,
-    decrement_pending_bytes,
-};
+use crate::net::{ClientPlatform, GameProfile, PacketRateLimiter, PendingBytes, PlayerConfig};
 use crate::plugin::api::events::world::chunk_send::ChunkSend;
 use crate::plugin::player::player_custom_payload::PlayerCustomPayloadEvent;
 use crate::{error::PumpkinError, server::Server};
@@ -105,9 +100,11 @@ pub struct JavaClient {
     outgoing_packet_queue_send: Sender<OutgoingPacket>,
     outgoing_packet_queue_recv: Option<Receiver<OutgoingPacket>>,
     /// Tracks total buffered payload bytes in the outgoing queue.
-    pub pending_bytes: Arc<AtomicUsize>,
+    pub pending_bytes: Arc<PendingBytes>,
     /// The packet encoder for outgoing packets.
-    network_writer: std::sync::Mutex<Option<TCPNetworkEncoder<BufWriter<OwnedWriteHalf>>>>,
+    network_writer: std::sync::Mutex<Option<TCPNetworkEncoder<JavaWriteHalf>>>,
+    /// Last socket progress. Stall watchdog of the writer task.
+    write_progress: WriteProgress,
     /// The packet decoder for incoming packets.
     network_reader: std::sync::Mutex<Option<TCPNetworkDecoder<BufReader<OwnedReadHalf>>>>,
     /// Keep Alive:
@@ -157,9 +154,10 @@ impl JavaClient {
             rt_handle: tokio::runtime::Handle::current(),
             outgoing_packet_queue_send: send,
             outgoing_packet_queue_recv: Some(recv),
-            pending_bytes: Arc::new(AtomicUsize::new(0)),
+            pending_bytes: Arc::new(PendingBytes::default()),
             version: pending.version,
             network_writer: std::sync::Mutex::new(Some(pending.network_writer)),
+            write_progress: pending.write_progress,
             network_reader: std::sync::Mutex::new(Some(pending.network_reader)),
             brand: ArcSwap::from_pointee(pending.brand),
             player: ArcSwap::from_pointee(None),
@@ -437,7 +435,7 @@ impl JavaClient {
                 .tick_flush
                 .admit(permit, OutgoingPacket::normal(packet_data)),
             Err(err) => {
-                decrement_pending_bytes(&self.pending_bytes, packet_len);
+                self.pending_bytes.release(packet_len);
                 // This is expected to fail if we are closed
                 if !self.close_token.is_cancelled() {
                     warn!(
@@ -462,16 +460,9 @@ impl JavaClient {
         // paths below): gate `has_handlers` + non-current version, split id VarInt,
         // `fire_blocking`, re-frame id + payload, drop if cancelled.
         let packet_len = packet_data.len();
-        let prev_bytes = self.pending_bytes.fetch_add(packet_len, Ordering::AcqRel);
-        let new_bytes = prev_bytes.saturating_add(packet_len);
-
-        if new_bytes > MAX_PENDING_BYTES {
-            decrement_pending_bytes(&self.pending_bytes, packet_len);
+        if let Err(overflow) = self.pending_bytes.reserve(packet_len) {
             if !self.close_token.is_cancelled() {
-                warn!(
-                    "Client {} outbound packet buffer overflow ({} bytes > {} bytes). Closing connection.",
-                    self.id, new_bytes, MAX_PENDING_BYTES
-                );
+                warn!("Client {} {overflow}. Closing connection.", self.id);
                 self.close();
             }
             return None;
@@ -494,7 +485,7 @@ impl JavaClient {
                 .tick_flush
                 .admit(permit, OutgoingPacket::normal(packet_data)),
             Err(err) => {
-                decrement_pending_bytes(&self.pending_bytes, packet_len);
+                self.pending_bytes.release(packet_len);
                 let reason = match err {
                     // Vanilla queues without a limit, so a backlog disconnects instead of desyncing.
                     tokio::sync::mpsc::error::TrySendError::Full(()) => "channel full",
@@ -564,11 +555,11 @@ impl JavaClient {
 
         if let Some(data) = serialized {
             let packet_len = data.len();
-            let _ = self.pending_bytes.fetch_add(packet_len, Ordering::AcqRel);
+            self.pending_bytes.add(packet_len);
             match self.outgoing_packet_queue_send.try_reserve() {
                 Ok(permit) => self.tick_flush.admit(permit, OutgoingPacket::normal(data)),
                 Err(err) => {
-                    decrement_pending_bytes(&self.pending_bytes, packet_len);
+                    self.pending_bytes.release(packet_len);
                     match err {
                         tokio::sync::mpsc::error::TrySendError::Full(()) => {
                             warn!(
@@ -638,7 +629,7 @@ impl JavaClient {
                 .tick_flush
                 .admit(permit, OutgoingPacket::high_priority(packet, completion_tx)),
             Err(err) => {
-                decrement_pending_bytes(&self.pending_bytes, packet_len);
+                self.pending_bytes.release(packet_len);
                 // It is expected that the packet will fail if closed
                 if !self.close_token.is_cancelled() {
                     warn!(
@@ -717,8 +708,6 @@ impl JavaClient {
         let Some(packet_receiver) = self.outgoing_packet_queue_recv.take() else {
             return;
         };
-        let close_token = self.close_token.clone();
-        let pending_bytes = self.pending_bytes.clone();
         let Some(writer) = self
             .network_writer
             .lock()
@@ -727,21 +716,15 @@ impl JavaClient {
         else {
             return;
         };
-        let id = self.id;
-        let suspend_flushing = self.suspend_flushing.clone();
-        let tick_flush = self.tick_flush.clone();
-        self.spawn_task(async move {
-            run_outgoing_packet_writer(
-                packet_receiver,
-                writer,
-                close_token,
-                suspend_flushing,
-                tick_flush,
-                pending_bytes,
-                id,
-            )
-            .await;
-        });
+        let ctx = WriterCtx {
+            close_token: self.close_token.clone(),
+            suspend_flushing: self.suspend_flushing.clone(),
+            tick_flush: self.tick_flush.clone(),
+            pending_bytes: self.pending_bytes.clone(),
+            progress: self.write_progress.clone(),
+            id: self.id,
+        };
+        self.spawn_task(run_outgoing_packet_writer(packet_receiver, writer, ctx));
     }
 
     /// Closes the connection to the client.

@@ -9,7 +9,7 @@ use std::{
     net::SocketAddr,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
 
@@ -60,10 +60,7 @@ use self::level_chunk::CLevelChunk;
 use self::nethernet::NetherNetSession;
 use crate::{
     entity::player::Player,
-    net::{
-        DisconnectReason, MAX_PENDING_BYTES, PacketHandlerResult, PacketRateLimiter,
-        decrement_pending_bytes,
-    },
+    net::{DisconnectReason, PacketHandlerResult, PacketRateLimiter, PendingBytes},
     plugin::api::events::world::chunk_send::ChunkSend,
     server::Server,
 };
@@ -111,7 +108,7 @@ pub struct BedrockClient {
     outgoing_packet_queue_recv: Mutex<Option<UnboundedReceiver<OutgoingPacket>>>,
 
     /// Tracks total buffered payload bytes in the outgoing queues.
-    pub pending_bytes: Arc<AtomicUsize>,
+    pub pending_bytes: Arc<PendingBytes>,
 
     /// The packet encoder for outgoing packets.
     network_writer: Arc<RwLock<BedrockBatchEncoder>>,
@@ -142,6 +139,8 @@ impl BedrockClient {
         be_clients: Arc<Mutex<HashMap<SocketAddr, Arc<Self>>>>,
         packet_limiter: PacketRateLimiter,
     ) -> Self {
+        // TODO: unbounded outgoing queue: no slot limit, only `MAX_PENDING_BYTES`.
+        // Java: bounded `OUTGOING_QUEUE_CAPACITY` -> full FIFO kicks.
         let (send, recv) = tokio::sync::mpsc::unbounded_channel();
         let (incoming_send, incoming_recv) = tokio::sync::mpsc::channel(4096);
         let rt_handle = tokio::runtime::Handle::current();
@@ -158,7 +157,7 @@ impl BedrockClient {
             rt_handle,
             outgoing_packet_queue_send: send,
             outgoing_packet_queue_recv: Mutex::new(Some(recv)),
-            pending_bytes: Arc::new(AtomicUsize::new(0)),
+            pending_bytes: Arc::new(PendingBytes::default()),
             next_form_id: AtomicU32::new(0),
             inventory_opened: AtomicBool::new(false),
             last_food_rejection_tick: AtomicCell::new(None),
@@ -226,7 +225,7 @@ impl BedrockClient {
                     let data = packet.data.strip_prefix(&[BEDROCK_GAME_PACKET]);
                     let Some(data) = data else {
                         warn!("Refusing to send a non-game packet over NetherNet");
-                        decrement_pending_bytes(&client.pending_bytes, packet_len);
+                        client.pending_bytes.release(packet_len);
                         continue;
                     };
                     if let Err(error) = client.session.send(Bytes::copy_from_slice(data)).await {
@@ -234,12 +233,12 @@ impl BedrockClient {
                             "Failed to send NetherNet packet to {}: {error}",
                             client.address
                         );
-                        decrement_pending_bytes(&client.pending_bytes, packet_len);
+                        client.pending_bytes.release(packet_len);
                         client.close().await;
                         return;
                     }
 
-                    decrement_pending_bytes(&client.pending_bytes, packet_len);
+                    client.pending_bytes.release(packet_len);
 
                     if let Some(completion) = packet.completion {
                         let _ = completion.send(());
@@ -294,7 +293,7 @@ impl BedrockClient {
         let packet = CDisconnect::new(reason as i32, message);
         if let Ok(data) = self.serialize_packet(&packet) {
             let packet_len = data.len();
-            let _ = self.pending_bytes.fetch_add(packet_len, Ordering::AcqRel);
+            self.pending_bytes.add(packet_len);
             let _ = self
                 .outgoing_packet_queue_send
                 .send(OutgoingPacket::normal(data));
@@ -454,36 +453,41 @@ impl BedrockClient {
     }
 
     pub fn try_enqueue_packet_data(&self, packet_data: Bytes) {
-        if self.is_closed() {
+        let Some(packet_len) = self.reserve_pending_bytes(&packet_data) else {
             return;
-        }
-
-        let packet_len = packet_data.len();
-        let prev_bytes = self.pending_bytes.fetch_add(packet_len, Ordering::AcqRel);
-        let new_bytes = prev_bytes.saturating_add(packet_len);
-
-        if new_bytes > MAX_PENDING_BYTES {
-            decrement_pending_bytes(&self.pending_bytes, packet_len);
-            if !self.is_closed() {
-                warn!(
-                    "Bedrock client {} outbound packet buffer overflow ({} bytes > {} bytes). Closing connection.",
-                    self.address, new_bytes, MAX_PENDING_BYTES
-                );
-                self.close_token.cancel();
-            }
-            return;
-        }
+        };
 
         if let Err(err) = self
             .outgoing_packet_queue_send
             .send(OutgoingPacket::normal(packet_data))
         {
-            decrement_pending_bytes(&self.pending_bytes, packet_len);
+            self.pending_bytes.release(packet_len);
             // This is expected to fail if we are closed
             if !self.is_closed() {
                 error!("Failed to add packet to the outgoing packet queue for client: {err}");
             }
         }
+    }
+
+    /// `None` when the packet must be dropped.
+    fn reserve_pending_bytes(&self, packet_data: &Bytes) -> Option<usize> {
+        if self.is_closed() {
+            return None;
+        }
+
+        let packet_len = packet_data.len();
+        if let Err(overflow) = self.pending_bytes.reserve(packet_len) {
+            if !self.is_closed() {
+                warn!(
+                    "Bedrock client {} {overflow}. Closing connection.",
+                    self.address
+                );
+                self.close_token.cancel();
+            }
+            return None;
+        }
+
+        Some(packet_len)
     }
 
     pub fn write_raw_packet<P: BClientPacket>(
@@ -543,32 +547,16 @@ impl BedrockClient {
     }
 
     pub async fn send_game_packet(&self, packet_data: Bytes) {
-        if self.is_closed() {
+        let Some(packet_len) = self.reserve_pending_bytes(&packet_data) else {
             return;
-        }
-
-        let packet_len = packet_data.len();
-        let prev_bytes = self.pending_bytes.fetch_add(packet_len, Ordering::AcqRel);
-        let new_bytes = prev_bytes.saturating_add(packet_len);
-
-        if new_bytes > MAX_PENDING_BYTES {
-            decrement_pending_bytes(&self.pending_bytes, packet_len);
-            if !self.is_closed() {
-                warn!(
-                    "Bedrock client {} outbound packet buffer overflow ({} bytes > {} bytes). Closing connection.",
-                    self.address, new_bytes, MAX_PENDING_BYTES
-                );
-                self.close_token.cancel();
-            }
-            return;
-        }
+        };
 
         let (tx, rx) = oneshot::channel();
         if let Err(err) = self
             .outgoing_packet_queue_send
             .send(OutgoingPacket::priority(packet_data, tx))
         {
-            decrement_pending_bytes(&self.pending_bytes, packet_len);
+            self.pending_bytes.release(packet_len);
             if !self.is_closed() {
                 error!("Failed to add packet to the outgoing packet queue: {err}");
             }

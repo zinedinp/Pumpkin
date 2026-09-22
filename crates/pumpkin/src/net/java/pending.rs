@@ -23,10 +23,7 @@ use pumpkin_protocol::{
 use pumpkin_util::{Hand, text::TextComponent, version::JavaMinecraftVersion};
 use tokio::{
     io::{BufReader, BufWriter},
-    net::{
-        TcpStream,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-    },
+    net::{TcpStream, tcp::OwnedReadHalf},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
@@ -41,6 +38,7 @@ use crate::{
 };
 
 use super::JavaClient;
+use super::write_progress::{JavaWriteHalf, ProgressWriter, WriteProgress};
 
 const BRAND_CHANNEL_PREFIX: &str = "minecraft:brand";
 
@@ -61,7 +59,8 @@ pub struct PendingConnection {
     pub version: AtomicCell<JavaMinecraftVersion>,
     pub connection_state: AtomicCell<ConnectionState>,
     pub close_token: CancellationToken,
-    pub network_writer: TCPNetworkEncoder<BufWriter<OwnedWriteHalf>>,
+    pub network_writer: TCPNetworkEncoder<JavaWriteHalf>,
+    pub write_progress: WriteProgress,
     pub network_reader: TCPNetworkDecoder<BufReader<OwnedReadHalf>>,
     pub gameprofile: Option<GameProfile>,
     pub config: Option<PlayerConfig>,
@@ -80,6 +79,7 @@ impl PendingConnection {
         packet_limiter: PacketRateLimiter,
     ) -> Self {
         let (read, write) = tcp_stream.into_split();
+        let write_progress = WriteProgress::new();
         Self {
             id,
             address,
@@ -87,7 +87,11 @@ impl PendingConnection {
             version: AtomicCell::new(CURRENT_MC_VERSION),
             connection_state: AtomicCell::new(ConnectionState::HandShake),
             close_token: CancellationToken::new(),
-            network_writer: TCPNetworkEncoder::new(BufWriter::new(write)),
+            network_writer: TCPNetworkEncoder::new(BufWriter::new(ProgressWriter::new(
+                write,
+                write_progress.clone(),
+            ))),
+            write_progress,
             network_reader: TCPNetworkDecoder::new(BufReader::new(read)),
             gameprofile: None,
             config: None,
