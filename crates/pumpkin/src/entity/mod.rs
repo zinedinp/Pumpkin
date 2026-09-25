@@ -963,6 +963,8 @@ pub struct Entity {
     pub movement_multiplier: AtomicCell<Vector3<f64>>,
     /// Vanilla `needsSync`: tracker resyncs position and velocity of entities
     pub velocity_dirty: AtomicBool,
+    /// velocity goes to the own client
+    pub sync_velocity: AtomicBool,
     /// Set when an Entity is to be removed but could still be referenced
     pub removed: AtomicBool,
     /// The last sent yaw value (encoded as u8) for change detection
@@ -1099,6 +1101,7 @@ impl Entity {
             synched_data: synched_entity_data::SynchedEntityData::new(),
             movement_multiplier: AtomicCell::new(Vector3::default()),
             velocity_dirty: AtomicBool::new(true),
+            sync_velocity: AtomicBool::new(false),
             removed: AtomicBool::new(false),
             last_sent_yaw: AtomicU8::new(0),
             last_sent_pitch: AtomicU8::new(0),
@@ -1274,19 +1277,32 @@ impl Entity {
 
     /// Vanilla `hurtMarked` path: immediate, to watchers and self.
     pub fn send_velocity(&self) {
+        self.send_velocity_to_watchers();
+        if self.entity_type == &EntityType::PLAYER
+            && let Some(player) = self.world.load().get_player_by_id(self.entity_id)
+        {
+            player.send_own_velocity(self.velocity.load());
+        }
+    }
+
+    /// watchers only: Own client predicts its pushes.
+    pub fn send_velocity_to_watchers(&self) {
         let velocity = self.velocity.load();
         self.last_sent_velocity.store(velocity);
-        self.world
-            .load()
-            .send_to_tracking_players_and_self_editioned(
-                self,
-                &CEntityVelocity::new(self.entity_id.into(), velocity),
-                &CSetActorMotion {
-                    target_runtime_id: VarULong(self.entity_id as u64),
-                    motion: Vector3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32),
-                    tick: VarULong(0),
-                },
-            );
+        self.world.load().send_to_tracking_players_editioned(
+            self,
+            &CEntityVelocity::new(self.entity_id.into(), velocity),
+            &CSetActorMotion {
+                target_runtime_id: VarULong(self.entity_id as u64),
+                motion: Vector3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32),
+                tick: VarULong(0),
+            },
+        );
+    }
+
+    /// next fuse velocity send includes self
+    pub fn mark_hurt(&self) {
+        self.sync_velocity.store(true, Ordering::SeqCst);
     }
 
     #[must_use]
