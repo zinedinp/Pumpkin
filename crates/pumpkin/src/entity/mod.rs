@@ -516,6 +516,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
     /// Called when a player collides with an entity
     fn on_player_collision(&self, _player: &Arc<Player>) {}
 
+    /// When false, world tick skips the player-touch scan for this entity.
+    fn receives_player_touch(&self) -> bool {
+        false
+    }
+
     fn is_passenger(&self) -> bool {
         self.get_entity().has_vehicle()
     }
