@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, num::NonZero, sync::Arc};
+use std::{
+    net::SocketAddr,
+    num::NonZero,
+    sync::{Arc, Weak},
+};
 
 use bytes::Bytes;
 use crossbeam::atomic::AtomicCell;
@@ -6,6 +10,7 @@ use pumpkin_config::networking::compression::CompressionInfo;
 use pumpkin_data::packet::CURRENT_MC_VERSION;
 use pumpkin_protocol::{
     ClientPacket, ConnectionState, PacketDecodeError, RawPacket, ServerPacket,
+    codec::var_int::VarInt,
     java::{
         client::config::CConfigDisconnect,
         client::login::CLoginDisconnect,
@@ -18,7 +23,7 @@ use pumpkin_protocol::{
         },
     },
     packet::MultiVersionJavaPacket,
-    ser::ReadingError,
+    ser::{NetworkReadExt, NetworkWriteExt, ReadingError},
 };
 use pumpkin_util::{Hand, text::TextComponent, version::JavaMinecraftVersion};
 use tokio::{
@@ -37,6 +42,7 @@ use crate::{
         EncryptionError, GameProfile, PacketHandlerResult, PacketRateLimiter, PlayerConfig,
         can_not_join,
     },
+    plugin::server::packet::{ConnectionPacketReceivedEvent, ConnectionPacketSentEvent},
     server::Server,
 };
 
@@ -69,6 +75,8 @@ pub struct PendingConnection {
     pub packet_limiter: PacketRateLimiter,
     pub verify_token: Option<[u8; 4]>,
     pub vine_challenge: Option<[u8; 16]>,
+    /// For the multiversion plugin's connection packet events.
+    server: Weak<Server>,
 }
 
 impl PendingConnection {
@@ -78,6 +86,7 @@ impl PendingConnection {
         address: SocketAddr,
         id: u64,
         packet_limiter: PacketRateLimiter,
+        server: Weak<Server>,
     ) -> Self {
         let (read, write) = tcp_stream.into_split();
         Self {
@@ -95,6 +104,7 @@ impl PendingConnection {
             packet_limiter,
             verify_token: None,
             vine_challenge: None,
+            server,
         }
     }
 
@@ -166,21 +176,100 @@ impl PendingConnection {
         }
     }
 
-    // TODO: no translation hook before play (packet events need a player), so older clients
-    // still go through core's own per-version codec and login flow here.
+    /// Connection packet events for clients below 26.3, after handshake.
+    fn multiversion_server(&self) -> Option<Arc<Server>> {
+        if self.version.load() == CURRENT_MC_VERSION
+            || self.connection_state.load() == ConnectionState::HandShake
+        {
+            return None;
+        }
+        self.server.upgrade()
+    }
+
+    /// Encoded as 26.3. `ConnectionPacketSentEvent` can rewrite it.
     pub async fn send_packet_now<P: ClientPacket>(&mut self, packet: &P) {
         let mut packet_buf = Vec::new();
         if let Err(err) =
-            JavaClient::write_packet_for_version(packet, self.version.load(), &mut packet_buf)
+            JavaClient::write_packet_for_version(packet, CURRENT_MC_VERSION, &mut packet_buf)
         {
             error!("Failed to write packet: {err:?}");
             return;
         }
-        let payload = Bytes::from(packet_buf);
+        let Some(payload) = self.translate_outgoing(Bytes::from(packet_buf)).await else {
+            return;
+        };
         if let Err(err) = self.network_writer.write_packet(payload).await {
             warn!("Failed to send packet to client {}: {}", self.id, err);
         }
         let _ = self.network_writer.flush().await;
+    }
+
+    /// `ConnectionPacketSentEvent` in the server's 26.3 format. `None` when cancelled.
+    async fn translate_outgoing(&self, packet_data: Bytes) -> Option<Bytes> {
+        let Some(server) = self.multiversion_server() else {
+            return Some(packet_data);
+        };
+        if !server
+            .plugin_manager
+            .has_handlers::<ConnectionPacketSentEvent>()
+        {
+            return Some(packet_data);
+        }
+
+        let mut reader = &packet_data[..];
+        let Ok(packet_id) = reader.get_var_int() else {
+            return Some(packet_data);
+        };
+        let payload = packet_data.slice(packet_data.len() - reader.len()..);
+        let mut event = ConnectionPacketSentEvent::new(
+            self.id,
+            self.version.load(),
+            self.connection_state.load(),
+            packet_id.0,
+            payload,
+        );
+        server.plugin_manager.fire(&server, &mut event).await;
+        if event.cancelled {
+            return None;
+        }
+
+        let mut framed = Vec::with_capacity(5 + event.payload.len());
+        framed.write_var_int(&VarInt(event.packet_id)).ok()?;
+        framed.extend_from_slice(&event.payload);
+        Some(framed.into())
+    }
+
+    /// `ConnectionPacketReceivedEvent` in the client's format; handlers rewrite to 26.3.
+    /// `None` when cancelled.
+    async fn translate_incoming(&self, packet: &RawPacket) -> Option<RawPacket> {
+        let Some(server) = self.multiversion_server() else {
+            return Some(RawPacket {
+                id: packet.id,
+                payload: packet.payload.clone(),
+            });
+        };
+        if !server
+            .plugin_manager
+            .has_handlers::<ConnectionPacketReceivedEvent>()
+        {
+            return Some(RawPacket {
+                id: packet.id,
+                payload: packet.payload.clone(),
+            });
+        }
+
+        let mut event = ConnectionPacketReceivedEvent::new(
+            self.id,
+            self.version.load(),
+            self.connection_state.load(),
+            packet.id,
+            packet.payload.clone(),
+        );
+        server.plugin_manager.fire(&server, &mut event).await;
+        (!event.cancelled).then(|| RawPacket {
+            id: event.packet_id,
+            payload: event.payload,
+        })
     }
 
     pub async fn kick(&mut self, reason: TextComponent) {
@@ -249,6 +338,10 @@ impl PendingConnection {
         server: &Arc<Server>,
         packet: &RawPacket,
     ) -> Result<Option<PacketHandlerResult>, ReadingError> {
+        let Some(packet) = self.translate_incoming(packet).await else {
+            return Ok(None);
+        };
+        let packet = &packet;
         match self.connection_state.load() {
             ConnectionState::HandShake => self.handle_handshake_packet(server, packet).await,
             ConnectionState::Status => self.handle_status_packet(server, packet).await,
@@ -293,7 +386,7 @@ impl PendingConnection {
     ) -> Result<Option<PacketHandlerResult>, ReadingError> {
         debug!("Handling status group");
         let mut payload = &packet.payload[..];
-        let version = self.version.load();
+        let version = CURRENT_MC_VERSION;
 
         match packet.id {
             id if id == pumpkin_protocol::java::server::status::SStatusRequest::to_id(version) => {
@@ -326,7 +419,7 @@ impl PendingConnection {
     ) -> Result<Option<PacketHandlerResult>, ReadingError> {
         debug!("Handling login group");
         let mut payload = &packet.payload[..];
-        let version = self.version.load();
+        let version = CURRENT_MC_VERSION;
 
         match packet.id {
             id if id == pumpkin_protocol::java::server::login::SLoginStart::to_id(version) => {
@@ -396,7 +489,7 @@ impl PendingConnection {
     ) -> Result<Option<PacketHandlerResult>, ReadingError> {
         debug!("Handling config group");
         let mut payload = &packet.payload[..];
-        let version = self.version.load();
+        let version = CURRENT_MC_VERSION;
 
         match packet.id {
             id if id == SClientInformationConfig::to_id(version) => {
