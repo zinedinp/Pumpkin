@@ -557,11 +557,12 @@ impl JavaClient {
     fn serialize_disconnect(&self, reason: &TextComponent) -> Option<Bytes> {
         match self.connection_state.load() {
             ConnectionState::Login => {
-                // TextComponent implements Serialize and writes in bytes instead of String, that's the reason we only use content
+                // TextComponent implements Serialize and writes in bytes instead of String
                 let packet = CLoginDisconnect::new(
                     serde_json::to_string(&reason.0).unwrap_or_else(|_| String::new()),
                 );
-                self.serialize_packet(&packet).ok()
+                // No player before `set_player`, so `translate_outgoing` can't convert it
+                Self::serialize_packet_for_version(&packet, self.version.load()).ok()
             }
             ConnectionState::Config => {
                 let reason_text = reason.clone().get_text();
