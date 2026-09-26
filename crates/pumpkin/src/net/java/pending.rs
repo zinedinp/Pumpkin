@@ -366,7 +366,7 @@ impl PendingConnection {
                     server,
                     pumpkin_protocol::java::server::handshake::SHandShake::read(
                         &mut payload,
-                        &self.version.load(),
+                        &CURRENT_MC_VERSION,
                     )?,
                 )
                 .await;
@@ -610,31 +610,23 @@ impl PendingConnection {
                 | ResourcePackResponseResult::DownloadSuccess
                 | ResourcePackResponseResult::Discarded
                 | ResourcePackResponseResult::Unknown(_) => {
-                    if self.version.load() >= JavaMinecraftVersion::V_1_20_5 {
-                        self.send_known_packs(server).await;
-                    } else {
-                        self.handle_known_packs(server).await;
-                    }
+                    self.send_known_packs(server).await;
                 }
                 ResourcePackResponseResult::Accepted => {}
                 ResourcePackResponseResult::Declined => {
                     if resource_config.force {
                         self.kick(TextComponent::text("Required resource pack was declined"))
                             .await;
-                    } else if self.version.load() >= JavaMinecraftVersion::V_1_20_5 {
-                        self.send_known_packs(server).await;
                     } else {
-                        self.handle_known_packs(server).await;
+                        self.send_known_packs(server).await;
                     }
                 }
                 ResourcePackResponseResult::DownloadFail => {
                     if resource_config.force {
                         self.kick(TextComponent::text("Failed to download resource pack"))
                             .await;
-                    } else if self.version.load() >= JavaMinecraftVersion::V_1_20_5 {
-                        self.send_known_packs(server).await;
                     } else {
-                        self.handle_known_packs(server).await;
+                        self.send_known_packs(server).await;
                     }
                 }
                 ResourcePackResponseResult::InvalidUrl => {

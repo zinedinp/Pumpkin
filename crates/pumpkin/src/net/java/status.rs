@@ -7,11 +7,9 @@ use pumpkin_protocol::{
 use std::sync::Arc;
 
 use crate::{
-    net::java::{handshake::multiversion_admits, pending::PendingConnection},
-    plugin::server::list_ping::ServerListPingEvent,
+    net::java::pending::PendingConnection, plugin::server::list_ping::ServerListPingEvent,
     server::Server,
 };
-use pumpkin_data::packet::LOWEST_SUPPORTED_MC_VERSION;
 use tracing::debug;
 
 impl PendingConnection {
@@ -25,13 +23,6 @@ impl PendingConnection {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .get_status_response(client_version.protocol_version())
         };
-        // Same rule as the handshake, or older clients list the server as incompatible.
-        if client_version < LOWEST_SUPPORTED_MC_VERSION
-            && multiversion_admits(server, client_version)
-            && let Some(version) = &mut status_response.version
-        {
-            version.protocol = client_version.protocol_version() as u32;
-        }
 
         let (max_players, num_players) = status_response
             .players
