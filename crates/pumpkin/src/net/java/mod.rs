@@ -82,8 +82,8 @@ use crate::{error::PumpkinError, server::Server};
 pub struct JavaClient {
     pub id: u64,
     /// The protocol the client speaks. Play packets are always encoded/decoded as
-    /// `CURRENT_MC_VERSION`; older clients only get in with the `pumpkin-java-multiversion`
-    /// plugin, which converts at `PacketReceivedEvent` / `PacketSentEvent`.
+    /// `CURRENT_MC_VERSION`. Older clients are not admitted; the packet events are the hook
+    /// for a plugin that converts them.
     pub version: AtomicCell<JavaMinecraftVersion>,
     /// The client's game profile information. Direct field (lock-free).
     pub gameprofile: GameProfile,
@@ -349,7 +349,6 @@ impl JavaClient {
             return;
         }
 
-        let version = self.version.load();
         let (tx, rx) = oneshot::channel();
         rayon::spawn(move || {
             let mut serialized = Vec::with_capacity(valid_chunks.len());
@@ -379,19 +378,15 @@ impl JavaClient {
             return;
         }
 
-        if version >= JavaMinecraftVersion::V_1_20_2 {
-            self.send_packet(&CChunkBatchStart).await;
-        }
+        self.send_packet(&CChunkBatchStart).await;
 
         // One FIFO per connection: batch start/data/end stay in enqueue order.
         for chunk_data in serialized {
             self.send_packet_now_data(chunk_data).await;
         }
 
-        if version >= JavaMinecraftVersion::V_1_20_2 {
-            self.send_packet(&CChunkBatchEnd::new(sent_count as u16))
-                .await;
-        }
+        self.send_packet(&CChunkBatchEnd::new(sent_count as u16))
+            .await;
     }
 
     pub async fn enqueue_packet(&self, packet_data: Bytes) {
@@ -557,8 +552,7 @@ impl JavaClient {
                 let packet = CLoginDisconnect::new(
                     serde_json::to_string(&reason.0).unwrap_or_else(|_| String::new()),
                 );
-                // No player before `set_player`, so `translate_outgoing` can't convert it
-                Self::serialize_packet_for_version(&packet, self.version.load()).ok()
+                self.serialize_packet(&packet).ok()
             }
             ConnectionState::Config => {
                 let reason_text = reason.clone().get_text();
