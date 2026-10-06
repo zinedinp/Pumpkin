@@ -3,6 +3,7 @@ use super::{Controls, Goal, to_goal_ticks};
 use crate::entity::ageable::AgeableMob;
 use crate::entity::ai::goal::revenge::MobFilter;
 use crate::entity::ai::goal::track_target::TrackTargetGoal;
+use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::living::LivingEntity;
 use crate::entity::mob::Mob;
@@ -10,7 +11,6 @@ use crate::entity::mob::neutral::{NeutralMob, find_by_uuid};
 use crate::entity::{EntityBase, mob::MobEntity, player::Player};
 use crate::world::World;
 use pumpkin_data::attributes::Attributes;
-use pumpkin_data::entity::EntityType;
 use rand::RngExt;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -71,7 +71,7 @@ pub struct ActiveTargetGoal {
     track_target_goal: TrackTargetGoal,
     target: Option<Arc<dyn EntityBase>>,
     reciprocal_chance: i32,
-    target_type: Option<&'static EntityType>,
+    target_type: TargetMatch,
     target_predicate: TargetPredicate,
     condition: TargetCondition,
     gate: Option<MobFilter>,
@@ -80,7 +80,7 @@ pub struct ActiveTargetGoal {
 impl ActiveTargetGoal {
     pub fn new<F>(
         mob: &MobEntity,
-        target_type: &'static EntityType,
+        target_type: impl Into<TargetMatch>,
         reciprocal_chance: i32,
         check_visibility: bool,
         check_can_navigate: bool,
@@ -103,7 +103,7 @@ impl ActiveTargetGoal {
             track_target_goal,
             target: None,
             reciprocal_chance: to_goal_ticks(reciprocal_chance),
-            target_type: Some(target_type),
+            target_type: target_type.into(),
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
@@ -127,7 +127,7 @@ impl ActiveTargetGoal {
     #[must_use]
     pub fn with_default(
         mob: &MobEntity,
-        target_type: &'static EntityType,
+        target_type: impl Into<TargetMatch>,
         check_visibility: bool,
     ) -> Box<Self> {
         let track_target_goal = TrackTargetGoal::with_default(check_visibility);
@@ -140,7 +140,7 @@ impl ActiveTargetGoal {
             track_target_goal,
             target: None,
             reciprocal_chance: to_goal_ticks(DEFAULT_RECIPROCAL_CHANCE),
-            target_type: Some(target_type),
+            target_type: target_type.into(),
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
@@ -168,7 +168,7 @@ impl ActiveTargetGoal {
             track_target_goal,
             target: None,
             reciprocal_chance: to_goal_ticks(reciprocal_chance),
-            target_type: None,
+            target_type: TargetMatch::Any,
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
@@ -202,35 +202,28 @@ impl ActiveTargetGoal {
         // Pick the nearest candidate that passes the conditions, not the nearest overall.
         let predicate = &self.target_predicate;
         let condition = self.condition;
-        let found = if let Some(uuid) = condition.grudge_target(mob) {
+        let target_type = self.target_type;
+        let found = match condition.grudge_target(mob) {
             // Same range rule as the area search: follow range from the eye.
-            find_by_uuid(&world, uuid).filter(|candidate| {
+            Some(uuid) => find_by_uuid(&world, uuid).filter(|candidate| {
                 let entity = candidate.get_entity();
-                self.target_type
-                    .is_none_or(|target_type| entity.entity_type == target_type)
+                target_type.matches(entity.entity_type)
                     && entity.pos.load().squared_distance_to_vec(&search_pos)
                         <= follow_range * follow_range
                     && predicate.test(&world, Some(mob), candidate.as_ref())
                     && condition.allows_target(mob, candidate.as_ref(), &world)
-            })
-        } else if self.target_type == Some(&EntityType::PLAYER) {
-            world
+            }),
+            None if target_type.is_player() => world
                 .get_nearest_player(search_pos, follow_range, |player| {
                     predicate.test(&world, Some(mob), player.as_ref())
                         && condition.allows_target(mob, player.as_ref(), &world)
                 })
-                .map(|p: Arc<Player>| p as Arc<dyn EntityBase>)
-        } else {
-            let entity_types = self.target_type.map(|t| [t]);
-            world.get_nearest_entity(
-                search_pos,
-                follow_range,
-                entity_types.as_ref().map(<[&EntityType; 1]>::as_slice),
-                |entity| {
-                    predicate.test(&world, Some(mob), entity.as_ref())
-                        && condition.allows_target(mob, entity.as_ref(), &world)
-                },
-            )
+                .map(|p: Arc<Player>| p as Arc<dyn EntityBase>),
+            None => world.get_nearest_entity(search_pos, follow_range, None, |entity| {
+                target_type.matches(entity.get_entity().entity_type)
+                    && predicate.test(&world, Some(mob), entity.as_ref())
+                    && condition.allows_target(mob, entity.as_ref(), &world)
+            }),
         };
 
         self.target = found;

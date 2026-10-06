@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use super::{Controls, Goal};
+use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::predicate::EntityPredicate;
 use crate::entity::{EntityBase, ai::pathfinder::NavigatorGoal, mob::Mob};
-use pumpkin_data::entity::EntityType;
 use pumpkin_util::math::vector3::Vector3;
 
 const FAST_DISTANCE_SQ: f64 = 49.0;
@@ -13,7 +13,7 @@ const VERTICAL_RANGE: i32 = 7;
 
 pub struct AvoidEntityGoal {
     goal_control: Controls,
-    flee_type: &'static EntityType,
+    flee_from: TargetMatch,
     flee_distance: f64,
     slow_speed: f64,
     fast_speed: f64,
@@ -24,14 +24,14 @@ pub struct AvoidEntityGoal {
 impl AvoidEntityGoal {
     #[must_use]
     pub fn new(
-        flee_type: &'static EntityType,
+        flee_from: impl Into<TargetMatch>,
         flee_distance: f64,
         slow_speed: f64,
         fast_speed: f64,
     ) -> Self {
         Self {
             goal_control: Controls::MOVE,
-            flee_type,
+            flee_from: flee_from.into(),
             flee_distance,
             slow_speed,
             fast_speed,
@@ -45,15 +45,17 @@ impl AvoidEntityGoal {
         let pos = entity.pos.load();
         let world = entity.world.load();
 
-        if self.flee_type == &EntityType::PLAYER {
+        if self.flee_from.is_player() {
             world
                 .get_nearest_player(pos, self.flee_distance, |player| {
                     EntityPredicate::ExceptCreativeOrSpectator.test(player.get_entity())
                 })
                 .map(|p| p as Arc<dyn EntityBase>)
         } else {
-            world.get_nearest_entity(pos, self.flee_distance, Some(&[self.flee_type]), |entity| {
-                EntityPredicate::ExceptCreativeOrSpectator.test(entity.get_entity())
+            world.get_nearest_entity(pos, self.flee_distance, None, |entity| {
+                let entity = entity.get_entity();
+                self.flee_from.matches(entity.entity_type)
+                    && EntityPredicate::ExceptCreativeOrSpectator.test(entity)
             })
         }
     }

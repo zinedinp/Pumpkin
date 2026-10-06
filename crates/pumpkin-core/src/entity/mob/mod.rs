@@ -1013,7 +1013,7 @@ pub trait Mob: EntityBase + Send + Sync {
     fn temperament(&self) -> Temperament {
         Temperament::classify(
             self.as_neutral().is_some(),
-            self.get_mob_entity().living_entity.entity.entity_type.category,
+            self.get_entity().entity_type.category,
         )
     }
 
