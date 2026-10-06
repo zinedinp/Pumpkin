@@ -232,6 +232,7 @@ impl Mob for WolfEntity {
             return true;
         }
 
+        // TODO: vanilla also spares tamed `AbstractHorse`s
         if let Some(target_mob) = target.get_mob()
             && let Some(tamable) = target_mob.as_tamable()
             && tamable.is_tame()
