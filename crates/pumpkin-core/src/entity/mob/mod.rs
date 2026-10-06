@@ -1,4 +1,5 @@
 use super::{Entity, EntityBase, ai::pathfinder::Navigator, living::LivingEntity};
+use crate::entity::ai::behavior::temperament::Temperament;
 use crate::entity::ai::brain::Brain;
 use crate::entity::ai::brain::memory::PackedMemories;
 use crate::entity::ai::control::MoveControlTrait;
@@ -1006,6 +1007,14 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Must return `Some(self)` for every `NeutralMob` implementor. Not compiler-enforced.
     fn as_neutral(&self) -> Option<&dyn neutral::NeutralMob> {
         None
+    }
+
+    /// How this mob treats players by default. Derived, no per-mob data.
+    fn temperament(&self) -> Temperament {
+        Temperament::classify(
+            self.as_neutral().is_some(),
+            self.get_mob_entity().living_entity.entity.entity_type.category,
+        )
     }
 
     fn as_iron_golem(&self) -> Option<&crate::entity::passive::iron_golem::IronGolemEntity> {

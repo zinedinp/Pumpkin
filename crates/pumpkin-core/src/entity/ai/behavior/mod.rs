@@ -2,3 +2,4 @@
 //! instead of repeating the goal list.
 
 pub mod neutral;
+pub mod temperament;
