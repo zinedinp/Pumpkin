@@ -1475,4 +1475,34 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn mod_block_state_survives_pump_and_anvil_round_trips() {
+        let block = pumpkin_data::mod_registry::register_simple_block(
+            "persist:block",
+            "Persist",
+            5.0,
+            6.0,
+            true,
+        )
+        .unwrap();
+        let id = block.default_state.id;
+        let mut palette = BlockPalette::default();
+        palette.set(1, 2, 3, id);
+
+        let mut bytes = Vec::new();
+        palette.write_pump_binary(&mut bytes);
+        let read = BlockPalette::read_pump_binary(&mut bytes.as_slice()).unwrap();
+        assert_eq!(read.get(1, 2, 3), id);
+
+        let disk = BlockPalette::from_disk_nbt(palette.to_disk_nbt());
+        assert_eq!(disk.get(1, 2, 3), id);
+
+        // Anvil stores names, not ids: the name must resolve back.
+        let entry =
+            crate::generation::structure::template::PaletteEntry::new(block.name.to_string());
+        let state =
+            crate::generation::structure::template::BlockStateResolver::resolve_simple(&entry);
+        assert_eq!(state.map(|s| s.id), Some(id));
+    }
 }

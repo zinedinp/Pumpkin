@@ -2145,16 +2145,16 @@ pub fn build() -> TokenStream {
                 let name = name.strip_prefix("minecraft:").unwrap_or(name);
                 match name {
                     #type_from_name
-                    _ => None
+                    _ => crate::mod_registry::item_from_name(name),
                 }
             }
 
             #[doc = "Try to parse an item from a raw id."]
             #[must_use]
-            pub const fn from_id(id: u16) -> Option<&'static Self> {
+            pub fn from_id(id: u16) -> Option<&'static Self> {
                 match id {
                     #type_from_raw_id_arms
-                    _ => None
+                    _ => crate::mod_registry::item_from_id(id),
                 }
             }
         }

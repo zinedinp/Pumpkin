@@ -10,6 +10,7 @@ license.workspace = true
 flate2.workspace = true
 hex.workspace = true
 libloading.workspace = true
+pumpkin-data = { workspace = true, features = ["default"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

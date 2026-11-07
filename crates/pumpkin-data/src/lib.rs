@@ -465,6 +465,9 @@ pub use block_state::{BlockState, BlockStateId};
 #[cfg(feature = "block")]
 pub use blocks::{Block, BlockId, SpawnFloorPredicate};
 
+#[cfg(all(feature = "block", feature = "item"))]
+pub mod mod_registry;
+
 #[cfg(feature = "material_rule")]
 #[rustfmt::skip]
 #[path = "generated/material_rule.rs"]

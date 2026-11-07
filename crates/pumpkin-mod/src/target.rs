@@ -71,9 +71,7 @@ pub enum CompilePlan<'a> {
 #[must_use]
 pub fn compile_plan(requested: &str) -> CompilePlan<'_> {
     if is_wasm(requested) {
-        return CompilePlan::Wasm {
-            compile: requested,
-        };
+        return CompilePlan::Wasm { compile: requested };
     }
     if requested.contains("apple") && !cfg!(target_os = "macos") {
         return CompilePlan::Skip {

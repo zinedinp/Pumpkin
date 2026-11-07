@@ -270,12 +270,7 @@ fn prepare_one(
                 id: manifest.id.clone(),
                 message: "rustc wasm32-wasip2".into(),
             });
-            match compile_or_cache(
-                &crate_dir,
-                &manifest.id,
-                "wasm32-wasip2",
-                &opts.cache_dir,
-            ) {
+            match compile_or_cache(&crate_dir, &manifest.id, "wasm32-wasip2", &opts.cache_dir) {
                 Ok((path, millis, cached)) => {
                     server_wasm = Some(path);
                     steps.push(TimedStep {
@@ -362,7 +357,9 @@ fn compile_or_cache(
     };
     let src_hash = hash_tree(crate_dir)?;
     let stamp = dest_dir.join(".srchash");
-    if dest.is_file() && stamp.is_file() && std::fs::read_to_string(&stamp).is_ok_and(|s| s == src_hash)
+    if dest.is_file()
+        && stamp.is_file()
+        && std::fs::read_to_string(&stamp).is_ok_and(|s| s == src_hash)
     {
         return Ok((dest, 0, true));
     }
@@ -434,7 +431,10 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), ModError> {
         let Some(rel) = entry.enclosed_name() else {
             continue;
         };
-        if rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if rel
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             continue;
         }
         let out = dest.join(rel);
@@ -494,8 +494,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("hello");
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("melon-mod.toml"), "id = \"hello\"\nversion = \"1.0.0\"\n")
-            .unwrap();
+        std::fs::write(
+            root.join("melon-mod.toml"),
+            "id = \"hello\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(root.join("assets/hello")).unwrap();
         std::fs::write(root.join("assets/hello/a.txt"), "x").unwrap();
         let out = dir.path().join("hello.zip");
@@ -524,8 +527,10 @@ mod tests {
             .unwrap();
         zip.start_file("assets/hello/models/block/stealframe.json", options)
             .unwrap();
-        zip.write_all(br#"{"parent":"minecraft:block/cube_all","textures":{"all":"hello:block/stealframe"}}"#)
-            .unwrap();
+        zip.write_all(
+            br#"{"parent":"minecraft:block/cube_all","textures":{"all":"hello:block/stealframe"}}"#,
+        )
+        .unwrap();
         zip.start_file("assets/hello/lang/en_us.json", options)
             .unwrap();
         zip.write_all(br#"{"block.hello.stealframe":"Stealframe"}"#)
@@ -559,8 +564,11 @@ mod tests {
         let cache = game.join("mods").join(".cache");
         let hello = cache.join("hello-0.1.0");
         std::fs::create_dir_all(&hello).unwrap();
-        std::fs::write(hello.join("melon-mod.toml"), "id = \"hello\"\nversion = \"0.1.0\"\n")
-            .unwrap();
+        std::fs::write(
+            hello.join("melon-mod.toml"),
+            "id = \"hello\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
         let listed = extracted_mods(&cache);
         assert_eq!(listed, vec![hello]);
     }

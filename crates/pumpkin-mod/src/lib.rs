@@ -3,6 +3,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod activate;
 pub mod cabi;
 pub mod error;
 pub mod manifest;
@@ -10,6 +11,7 @@ pub mod pack;
 pub mod prepare;
 pub mod target;
 
+pub use activate::{activate, register_data};
 pub use cabi::{
     HostVTable, INIT_ABI_MISMATCH, INIT_NULL_HOST, INIT_OK, INIT_REGISTER_FAILED, MAX_ABI_STRING,
     MAX_LOG, PUMPKIN_MOD_ABI, REG_DUPLICATE, REG_EMPTY_ID, REG_NULL, REG_OK, REG_TOO_LONG,
@@ -23,5 +25,6 @@ pub use prepare::{
     prepare, save_state,
 };
 pub use target::{
-    CompilePlan, TARGETS, cargo_target_var, compile_plan, host_triple, lib_file_name, resolve_target,
+    CompilePlan, TARGETS, cargo_target_var, compile_plan, host_triple, lib_file_name,
+    resolve_target,
 };

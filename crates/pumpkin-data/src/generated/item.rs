@@ -125614,12 +125614,12 @@ impl Item {
             "zombie_spawn_egg" => Some(&Self::ZOMBIE_SPAWN_EGG),
             "zombie_villager_spawn_egg" => Some(&Self::ZOMBIE_VILLAGER_SPAWN_EGG),
             "zombified_piglin_spawn_egg" => Some(&Self::ZOMBIFIED_PIGLIN_SPAWN_EGG),
-            _ => None,
+            _ => crate::mod_registry::item_from_name(name),
         }
     }
     #[doc = "Try to parse an item from a raw id."]
     #[must_use]
-    pub const fn from_id(id: u16) -> Option<&'static Self> {
+    pub fn from_id(id: u16) -> Option<&'static Self> {
         match id {
             1253 => Some(&Self::ABANDONED_CAMP_MAP),
             983 => Some(&Self::ACACIA_BOAT),
@@ -127279,7 +127279,7 @@ impl Item {
             1333 => Some(&Self::ZOMBIE_SPAWN_EGG),
             1336 => Some(&Self::ZOMBIE_VILLAGER_SPAWN_EGG),
             1363 => Some(&Self::ZOMBIFIED_PIGLIN_SPAWN_EGG),
-            _ => None,
+            _ => crate::mod_registry::item_from_id(id),
         }
     }
 }

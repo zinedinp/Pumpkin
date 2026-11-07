@@ -291,12 +291,12 @@ impl BlockStateId {
     /// The total count of all registered block states.
     pub const COUNT: u16 = Self::STATE_COUNT;
 
-    // SAFETY: There must never be a BlockStateId where self.0 >= BlockStateId::STATE_COUNT
+    // SAFETY: There must never be a BlockStateId where self.0 >= BlockStateId::STATE_COUNT + MOD_STATE_CAP
 
     #[inline]
     #[must_use]
     pub const fn new(inner: u16) -> Option<Self> {
-        if inner < Self::STATE_COUNT {
+        if inner < Self::STATE_COUNT.saturating_add(crate::mod_registry::STATE_CAP) {
             return Some(Self(inner));
         }
         None
@@ -305,7 +305,7 @@ impl BlockStateId {
     #[inline]
     #[must_use]
     pub const fn new_or_air(inner: u16) -> Self {
-        if inner < Self::STATE_COUNT {
+        if inner < Self::STATE_COUNT.saturating_add(crate::mod_registry::STATE_CAP) {
             return Self(inner);
         }
         Self::AIR
@@ -319,38 +319,51 @@ impl BlockStateId {
 
     #[inline]
     #[must_use]
-    pub const fn to_state(self) -> &'static BlockState {
+    pub fn to_state(self) -> &'static BlockState {
         BlockState::from_id(self)
     }
 
     #[inline]
     #[must_use]
-    pub const fn to_block_id(self) -> BlockId {
+    pub fn to_block_id(self) -> BlockId {
         BlockId::from_state_id(self)
+    }
+
+    /// Generated vanilla table only. Extra zip-mod states map to air.
+    #[inline]
+    #[must_use]
+    pub const fn to_vanilla_block_id(self) -> BlockId {
+        BlockId::from_vanilla_state_id(self)
     }
 
     #[inline]
     #[must_use]
-    pub const fn to_block(self) -> &'static Block {
+    pub fn to_block(self) -> &'static Block {
         Block::from_state_id(self)
     }
 
     #[inline]
     #[must_use]
     pub const fn is_solid_render(self) -> bool {
-        self.to_state().is_solid_render()
+        BlockState::from_vanilla_id(self).is_solid_render()
     }
 
     #[inline]
     #[must_use]
     pub const fn can_occlude(self) -> bool {
-        self.to_state().can_occlude()
+        BlockState::from_vanilla_id(self).can_occlude()
     }
 
     #[inline]
     #[must_use]
     pub const fn has_analog_output_signal(self) -> bool {
-        self.to_state().has_analog_output_signal()
+        BlockState::from_vanilla_id(self).has_analog_output_signal()
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn is_air(self) -> bool {
+        BlockState::from_vanilla_id(self).is_air()
     }
 
     #[inline]
@@ -362,13 +375,13 @@ impl BlockStateId {
     #[inline]
     #[must_use]
     pub const fn is_side_solid(self, side: BlockDirection) -> bool {
-        self.to_state().is_side_solid(side)
+        BlockState::from_vanilla_id(self).is_side_solid(side)
     }
 
     #[inline]
     #[must_use]
     pub const fn is_center_solid(self, side: BlockDirection) -> bool {
-        self.to_state().is_center_solid(side)
+        BlockState::from_vanilla_id(self).is_center_solid(side)
     }
 
     #[inline]

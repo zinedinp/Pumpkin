@@ -94,11 +94,7 @@ pub fn registered_blocks() -> Vec<RegisteredBlock> {
 
 /// Borrow host memory for `len` bytes. `len == 0` is always empty, even if
 /// `ptr` is null. `len > max` is an error (callers truncate logs themselves).
-unsafe fn host_slice<'a>(
-    ptr: *const u8,
-    len: usize,
-    max: usize,
-) -> Result<&'a [u8], SliceError> {
+unsafe fn host_slice<'a>(ptr: *const u8, len: usize, max: usize) -> Result<&'a [u8], SliceError> {
     if len == 0 {
         return Ok(&[]);
     }
@@ -168,7 +164,9 @@ unsafe extern "C" fn host_register_block(
     } else {
         String::from_utf8_lossy(name).into_owned()
     };
-    let mut guard = blocks().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = blocks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if guard.iter().any(|b| b.id == id) {
         return REG_DUPLICATE;
     }
@@ -193,6 +191,18 @@ pub fn load_native(path: &Path) -> Result<(), ModError> {
         return Err(ModError::NativeNotFound {
             path: path.to_path_buf(),
         });
+    }
+
+    // Integrated server and client share the process: a lib that already
+    // ran its init must not run it again (`register_block` would report a
+    // duplicate).
+    if loaded()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .any(|lib| lib.path == path)
+    {
+        return Ok(());
     }
 
     // SAFETY: path is a player-installed cdylib; symbols are the C ABI contract.
@@ -238,12 +248,11 @@ pub fn load_native(path: &Path) -> Result<(), ModError> {
 
 fn read_abi(library: &Library, path: &Path) -> Result<u32, ModError> {
     // SAFETY: `pumpkin_mod_abi` is an exported `u32` from the C ABI contract.
-    let symbol: Symbol<*const u32> = unsafe { library.get(b"pumpkin_mod_abi\0") }.map_err(|_| {
-        ModError::MissingSymbol {
+    let symbol: Symbol<*const u32> =
+        unsafe { library.get(b"pumpkin_mod_abi\0") }.map_err(|_| ModError::MissingSymbol {
             path: path.to_path_buf(),
             symbol: "pumpkin_mod_abi",
-        }
-    })?;
+        })?;
     let ptr = *symbol;
     if ptr.is_null() {
         return Err(ModError::MissingSymbol {
@@ -257,12 +266,11 @@ fn read_abi(library: &Library, path: &Path) -> Result<u32, ModError> {
 
 fn read_init(library: &Library, path: &Path) -> Result<InitFn, ModError> {
     // SAFETY: `pumpkin_mod_init` is the exported C entry from the same contract.
-    let symbol: Symbol<InitFn> = unsafe { library.get(b"pumpkin_mod_init\0") }.map_err(|_| {
-        ModError::MissingSymbol {
+    let symbol: Symbol<InitFn> =
+        unsafe { library.get(b"pumpkin_mod_init\0") }.map_err(|_| ModError::MissingSymbol {
             path: path.to_path_buf(),
             symbol: "pumpkin_mod_init",
-        }
-    })?;
+        })?;
     Ok(*symbol)
 }
 
@@ -409,7 +417,9 @@ mod tests {
         load_native(&lib.path).unwrap();
         let blocks = registered_blocks();
         assert!(
-            blocks.iter().any(|b| b.id == "hello:stealframe" && b.name == "Stealframe"),
+            blocks
+                .iter()
+                .any(|b| b.id == "hello:stealframe" && b.name == "Stealframe"),
             "{blocks:?}"
         );
     }
@@ -433,6 +443,28 @@ mod tests {
             }}
             "#
         ));
+        load_native(&lib.path).unwrap();
+    }
+
+    #[test]
+    fn loading_the_same_lib_twice_does_not_run_init_again() {
+        let lib = compile(&format!(
+            r#"
+            {HOST_VTABLE_SRC}
+            #[unsafe(no_mangle)]
+            pub static pumpkin_mod_abi: u32 = 1;
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn pumpkin_mod_init(host: *const HostVTable) -> i32 {{
+                let host = unsafe {{ &*host }};
+                let id = b"twice:block";
+                let rc = unsafe {{ (host.register_block)(id.as_ptr(), id.len(), std::ptr::null(), 0) }};
+                if rc != 0 {{ return 3; }}
+                0
+            }}
+            "#
+        ));
+        load_native(&lib.path).unwrap();
+        // Integrated server, then client: the second call must be a no-op.
         load_native(&lib.path).unwrap();
     }
 }

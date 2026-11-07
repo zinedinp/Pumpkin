@@ -1799,40 +1799,45 @@ pub fn build() -> TokenStream {
             /// If you need access to the block use `BlockState::from_id_with_block` instead.
             #[inline]
             #[must_use]
-            pub const fn from_id(id: BlockStateId) -> &'static Self {
-                // Safety: We always check this condition when creating a BlockStateId.
-                // the u16 field is private and immutable. BlockStateId::STATE_COUNT is a const u16.
-                // If the condition held once, it will always hold.
-                unsafe { std::hint::assert_unchecked(id.as_u16() < BlockStateId::STATE_COUNT) }
-                // This hint guarantees that bound checks can be optimized away in release builds.
-                // Due to debug_assertions forcing -Zub_checks=yes (rust-lang/rust#123499)
-                // bound checks-panics are replaced with ub-checks on profile.dev
-                // https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/ub-checks.html
+            pub fn from_id(id: BlockStateId) -> &'static Self {
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    mappings::STATE_FROM_STATE_ID[raw as usize]
+                } else {
+                    crate::mod_registry::state_from_id(raw).unwrap_or(crate::Block::AIR.default_state)
+                }
+            }
 
-                mappings::STATE_FROM_STATE_ID[id.as_u16() as usize]
+            /// Const lookup into the generated vanilla table. Extra zip-mod
+            /// ids map to air; use [`Self::from_id`] at runtime for those.
+            #[inline]
+            #[must_use]
+            pub const fn from_vanilla_id(id: BlockStateId) -> &'static Self {
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    mappings::STATE_FROM_STATE_ID[raw as usize]
+                } else {
+                    mappings::STATE_FROM_STATE_ID[0]
+                }
             }
 
             #[doc = r" Get a block state from a state id and the corresponding block."]
             #[inline]
             #[must_use]
-            pub const fn from_id_with_block(id: BlockStateId) -> (&'static Block, &'static Self) {
+            pub fn from_id_with_block(id: BlockStateId) -> (&'static Block, &'static Self) {
                 let block = Block::from_state_id(id);
                 let state = Self::from_id(id);
                 (block, state)
             }
 
             #[must_use]
-            pub const fn to_be_network_id(id: BlockStateId) -> u32 {
-                // Safety: We always check this condition when creating a BlockStateId.
-                // the u16 field is private and immutable. BlockStateId::STATE_COUNT is a const u16.
-                // If the condition held once, it will always hold.
-                unsafe { std::hint::assert_unchecked(id.as_u16() < BlockStateId::STATE_COUNT) }
-                // This hint guarantees that bound checks can be optimized away in release builds.
-                // Due to debug_assertions forcing -Zub_checks=yes (rust-lang/rust#123499)
-                // bound checks-panics are replaced with ub-checks on profile.dev
-                // https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/ub-checks.html
-
-                Self::STATE_ID_TO_BEDROCK[id.as_u16() as usize]
+            pub fn to_be_network_id(id: BlockStateId) -> u32 {
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    Self::STATE_ID_TO_BEDROCK[raw as usize]
+                } else {
+                    u32::from(raw)
+                }
             }
         }
 
@@ -1894,46 +1899,46 @@ pub fn build() -> TokenStream {
             #[inline]
             #[must_use]
             pub fn from_registry_key(name: &str) -> Option<&'static Self> {
-                mappings::BLOCK_FROM_NAME_MAP.get(name)
+                mappings::BLOCK_FROM_NAME_MAP
+                    .get(name)
+                    .or_else(|| crate::mod_registry::block_from_name(name))
             }
 
             #[doc = r" Try to get a block from a namespace prefixed name."]
             #[must_use]
             pub fn from_name(name: &str) -> Option<&'static Self> {
                 let key = name.strip_prefix("minecraft:").unwrap_or(name);
-                mappings::BLOCK_FROM_NAME_MAP.get(key)
+                mappings::BLOCK_FROM_NAME_MAP
+                    .get(key)
+                    .or_else(|| crate::mod_registry::block_from_name(key))
             }
 
             /// Get a [`Block`] from a [`BlockId`]
             #[inline]
             #[must_use]
-            pub const fn from_id(id: BlockId) -> &'static Self {
-                // Safety: We always check this condition when creating a BlockId.
-                // the u16 field is private and immutable. BlockId::BLOCK_COUNT is a const u16.
-                // If the condition held once, it will always hold.
-                unsafe { std::hint::assert_unchecked(id.as_u16() < BlockId::BLOCK_COUNT) }
-                // This hint guarantees that bound checks can be optimized away in release builds.
-                // Due to debug_assertions forcing -Zub_checks=yes (rust-lang/rust#123499)
-                // bound checks-panics are replaced with ub-checks on profile.dev
-                // https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/ub-checks.html
-
-                mappings::TYPE_FROM_RAW_ID[id.as_u16() as usize]
+            pub fn from_id(id: BlockId) -> &'static Self {
+                let raw = id.as_u16();
+                if raw < BlockId::BLOCK_COUNT {
+                    mappings::TYPE_FROM_RAW_ID[raw as usize]
+                } else {
+                    crate::mod_registry::block_from_id(raw).unwrap_or(&Self::AIR)
+                }
             }
 
             /// Get a [`Block`] from a state id
             #[inline]
             #[must_use]
-            pub const fn from_state_id(id: BlockStateId) -> &'static Self {
+            pub fn from_state_id(id: BlockStateId) -> &'static Self {
                 Self::from_id(BlockId::from_state_id(id))
             }
 
             #[doc = r" Try to parse a block from an item id."]
             #[must_use]
-            pub const fn from_item_id(id: u16) -> Option<&'static Self> {
+            pub fn from_item_id(id: u16) -> Option<&'static Self> {
                 #[allow(unreachable_patterns)]
                 match id {
                     #(#block_from_item_id_arms)*
-                    _ => None
+                    _ => crate::mod_registry::block_from_item_id(id),
                 }
             }
 
@@ -1964,17 +1969,25 @@ pub fn build() -> TokenStream {
             /// Get a [`BlockId`] from a [`BlockStateId`]
             #[inline]
             #[must_use]
-            pub const fn from_state_id(id: BlockStateId) -> BlockId {
-                // Safety: We always check this condition when creating a BlockStateId.
-                // the u16 field is private and immutable. BlockStateId::STATE_COUNT is a const u16.
-                // If the condition held once, it will always hold.
-                unsafe { std::hint::assert_unchecked(id.as_u16() < BlockStateId::STATE_COUNT) }
-                // This hint guarantees that bound checks can be optimized away in release builds.
-                // Due to debug_assertions forcing -Zub_checks=yes (rust-lang/rust#123499)
-                // bound checks-panics are replaced with ub-checks on profile.dev
-                // https://doc.rust-lang.org/nightly/unstable-book/compiler-flags/ub-checks.html
+            pub fn from_state_id(id: BlockStateId) -> BlockId {
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    mappings::BLOCK_ID_FROM_STATE_ID[raw as usize]
+                } else {
+                    crate::mod_registry::block_id_from_state(raw).unwrap_or(BlockId::AIR)
+                }
+            }
 
-                mappings::BLOCK_ID_FROM_STATE_ID[id.as_u16() as usize]
+            /// Generated vanilla table only. Extra zip-mod states map to air.
+            #[inline]
+            #[must_use]
+            pub const fn from_vanilla_state_id(id: BlockStateId) -> BlockId {
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    mappings::BLOCK_ID_FROM_STATE_ID[raw as usize]
+                } else {
+                    BlockId::AIR
+                }
             }
         }
 

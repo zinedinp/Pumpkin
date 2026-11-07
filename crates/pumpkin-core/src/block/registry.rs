@@ -1475,7 +1475,12 @@ impl BlockRegistry {
     #[inline]
     #[must_use]
     pub fn get_pumpkin_block(&self, block: BlockId) -> Option<&Arc<dyn BlockBehaviour>> {
-        let idx = self.block_indices[block.as_u16() as usize];
+        // Zip-mod blocks sit after `BlockId::COUNT`: no table entry, no behaviour.
+        let idx = self
+            .block_indices
+            .get(block.as_u16() as usize)
+            .copied()
+            .unwrap_or(NO_BEHAVIOUR);
         if idx == NO_BEHAVIOUR {
             None
         } else {
@@ -1668,5 +1673,23 @@ mod replacement_tests {
                 expected
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod mod_block_tests {
+    use super::*;
+
+    #[test]
+    fn a_zip_mod_block_has_no_behaviour_and_does_not_panic() {
+        let block = pumpkin_data::mod_registry::register_simple_block(
+            "registry_test:block",
+            "Registry test",
+            5.0,
+            6.0,
+            true,
+        )
+        .unwrap();
+        assert!(default_registry().get_pumpkin_block(block.id).is_none());
     }
 }

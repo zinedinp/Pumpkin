@@ -585,7 +585,8 @@ impl ChunkData {
                 .map(|&id| {
                     let block = Block::from_state_id(id);
                     let mut comp = NbtCompound::new();
-                    let name = if block.name.starts_with("minecraft:") {
+                    // Zip-mod blocks carry their own namespace ("hello:stealframe").
+                    let name = if block.name.contains(':') {
                         block.name.to_string()
                     } else {
                         format!("minecraft:{}", block.name)
@@ -1686,5 +1687,31 @@ mod tests {
                 .unwrap()
                 .id
         );
+    }
+
+    #[test]
+    fn mod_blocks_survive_anvil_and_pump_chunks() {
+        use crate::chunk::ChunkData;
+        use pumpkin_util::math::vector2::Vector2;
+
+        let block = pumpkin_data::mod_registry::register_simple_block(
+            "persist:chunk_block",
+            "Persist",
+            5.0,
+            6.0,
+            true,
+        )
+        .unwrap();
+        let id = block.default_state.id;
+        let chunk = ChunkData::empty(0, 0);
+        chunk.section.set_block_absolute_y(3, 70, 4, id);
+
+        let anvil = chunk.internal_to_bytes();
+        let read = ChunkData::from_bytes(&anvil, Vector2::new(0, 0)).unwrap();
+        assert_eq!(read.section.get_block_absolute_y(3, 70, 4), Some(id));
+
+        let pump = chunk.internal_to_pump_bytes();
+        let read = ChunkData::internal_from_pump_bytes(&pump, Vector2::new(0, 0)).unwrap();
+        assert_eq!(read.section.get_block_absolute_y(3, 70, 4), Some(id));
     }
 }

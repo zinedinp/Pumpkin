@@ -16,7 +16,9 @@ pub enum ModError {
     MissingManifest { id: String },
     #[error("no native library for {triple} in {path:?}")]
     MissingPrebuilt { triple: String, path: PathBuf },
-    #[error("{path:?}: abi {found} does not match host {expected} (export `pumpkin_mod_abi: u32 = {expected}`)")]
+    #[error(
+        "{path:?}: abi {found} does not match host {expected} (export `pumpkin_mod_abi: u32 = {expected}`)"
+    )]
     AbiMismatch {
         path: PathBuf,
         found: u32,

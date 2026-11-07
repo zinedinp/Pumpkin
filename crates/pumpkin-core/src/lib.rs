@@ -330,7 +330,7 @@ async fn prepare_zip_mods(advanced: &AdvancedConfiguration) {
 }
 
 fn prepare_zip_mods_blocking(config: &pumpkin_config::ModsConfig, plugins_dir: PathBuf) {
-    use pumpkin_mod::{PrepareOpts, Side, load_native, prepare};
+    use pumpkin_mod::{PrepareOpts, Side, prepare};
     let mods_dir = PathBuf::from(&config.dir);
     let opts = PrepareOpts {
         cache_dir: mods_dir.join(".cache"),
@@ -346,13 +346,7 @@ fn prepare_zip_mods_blocking(config: &pumpkin_config::ModsConfig, plugins_dir: P
                 report.mods.len(),
                 report.total_millis
             );
-            for prepared in report.mods {
-                if let Some(lib) = &prepared.native_lib
-                    && let Err(error) = load_native(lib)
-                {
-                    error!("native mod {}: {error}", prepared.manifest.id);
-                }
-            }
+            pumpkin_mod::activate(&report.mods);
         }
         Err(error) => error!("zip mods: {error}"),
     }

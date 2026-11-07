@@ -331,12 +331,12 @@ impl BlockId {
     /// The total count of all registered blocks.
     pub const COUNT: u16 = Self::BLOCK_COUNT;
 
-    // SAFETY: There must never be a BlockId where self.0 >= BlockId::BLOCK_COUNT
+    // SAFETY: There must never be a BlockId where self.0 >= BlockId::BLOCK_COUNT + MOD_BLOCK_CAP
 
     #[inline]
     #[must_use]
     pub const fn new(inner: u16) -> Option<Self> {
-        if inner < Self::BLOCK_COUNT {
+        if inner < Self::BLOCK_COUNT.saturating_add(crate::mod_registry::BLOCK_CAP) {
             return Some(Self(inner));
         }
         None
@@ -345,7 +345,7 @@ impl BlockId {
     #[inline]
     #[must_use]
     pub const fn new_or_air(inner: u16) -> Self {
-        if inner < Self::BLOCK_COUNT {
+        if inner < Self::BLOCK_COUNT.saturating_add(crate::mod_registry::BLOCK_CAP) {
             return Self(inner);
         }
         Self::AIR
@@ -353,7 +353,7 @@ impl BlockId {
 
     #[inline]
     #[must_use]
-    pub const fn to_block(self) -> &'static Block {
+    pub fn to_block(self) -> &'static Block {
         Block::from_id(self)
     }
 

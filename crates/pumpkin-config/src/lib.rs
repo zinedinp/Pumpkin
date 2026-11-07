@@ -19,10 +19,10 @@ use tracing::{debug, error, warn};
 pub mod fun;
 /// Server logging configuration options.
 pub mod logging;
-/// Networking and protocol configuration options.
-pub mod networking;
 /// Zip-mod folder (content / WASM / native libs).
 pub mod mods;
+/// Networking and protocol configuration options.
+pub mod networking;
 /// Plugin management configuration options.
 pub mod plugins;
 /// Recipe system configuration options.
@@ -33,6 +33,7 @@ pub mod resource_pack;
 
 pub use chat::{AntiSpamConfig, ChatConfig};
 pub use commands::{CommandOverride, CommandsConfig};
+pub use mods::ModsConfig;
 pub use networking::auth::AuthenticationConfig;
 pub use networking::bedrock::BedrockConfig;
 pub use networking::compression::CompressionConfig;
@@ -40,7 +41,6 @@ pub use networking::java::JavaConfig;
 pub use networking::lan_broadcast::LANBroadcastConfig;
 pub use networking::management::ManagementServerConfig;
 pub use networking::packet_limiter::PacketLimiterConfig;
-pub use mods::ModsConfig;
 pub use plugins::{PluginOverride, PluginsConfig};
 pub use pvp::PVPConfig;
 pub use server_links::ServerLinksConfig;
