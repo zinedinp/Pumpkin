@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 pub struct PluginsConfig {
     /// Whether the plugin system is enabled. If false, no plugins will be loaded.
     pub enabled: bool,
+    /// Folder of WASM plugins, relative to the working directory or absolute.
+    /// Zip-mod prepare copies `server.wasm` here as `<id>.wasm`.
+    #[serde(default = "default_plugin_dir")]
+    pub dir: String,
     /// Whether to watch the plugins directory and automatically hot-reload modified plugins.
     pub hot_reload: bool,
     /// Whether the server asks for confirmation in the console when a plugin requests new permissions.
@@ -49,10 +53,15 @@ pub struct PluginsConfig {
     pub verify_signatures: bool,
 }
 
+fn default_plugin_dir() -> String {
+    "./plugins".to_owned()
+}
+
 impl Default for PluginsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            dir: "./plugins".to_owned(),
             hot_reload: false,
             ask_permission_confirmation: true,
             allow_unsigned: true,
@@ -111,6 +120,7 @@ mod tests {
     fn default_config() {
         let config = PluginsConfig::default();
         assert!(config.enabled);
+        assert_eq!(config.dir, "./plugins");
         assert!(!config.hot_reload);
         assert!(config.ask_permission_confirmation);
         assert!(config.allow_unsigned);

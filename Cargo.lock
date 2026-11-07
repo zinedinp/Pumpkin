@@ -2937,6 +2937,7 @@ dependencies = [
  "pumpkin-config",
  "pumpkin-core",
  "pumpkin-data",
+ "pumpkin-mod",
  "pumpkin-util",
  "pumpkin-wasm-host",
  "pumpkin-world",
@@ -3062,6 +3063,7 @@ dependencies = [
  "pumpkin-gametest",
  "pumpkin-inventory",
  "pumpkin-macros",
+ "pumpkin-mod",
  "pumpkin-nbt",
  "pumpkin-protocol",
  "pumpkin-util",
@@ -3159,6 +3161,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "pumpkin-mod"
+version = "0.2.1+26.3-26.60"
+dependencies = [
+ "flate2",
+ "hex",
+ "libloading",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+ "tracing",
+ "zip",
 ]
 
 [[package]]

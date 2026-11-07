@@ -21,6 +21,8 @@ pub mod fun;
 pub mod logging;
 /// Networking and protocol configuration options.
 pub mod networking;
+/// Zip-mod folder (content / WASM / native libs).
+pub mod mods;
 /// Plugin management configuration options.
 pub mod plugins;
 /// Recipe system configuration options.
@@ -38,6 +40,7 @@ pub use networking::java::JavaConfig;
 pub use networking::lan_broadcast::LANBroadcastConfig;
 pub use networking::management::ManagementServerConfig;
 pub use networking::packet_limiter::PacketLimiterConfig;
+pub use mods::ModsConfig;
 pub use plugins::{PluginOverride, PluginsConfig};
 pub use pvp::PVPConfig;
 pub use server_links::ServerLinksConfig;
@@ -174,6 +177,8 @@ pub struct AdvancedConfiguration {
     pub recipe: RecipeConfig,
     /// Plugin-related configuration.
     pub plugins: PluginsConfig,
+    /// Zip mods in `mods/` (content, WASM, native cdylibs).
+    pub mods: ModsConfig,
     /// Advancement configuration
     pub advancement: AdvancementConfig,
 }

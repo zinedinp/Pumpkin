@@ -33,6 +33,7 @@ use rustyline::history::FileHistory;
 use rustyline::{Config, error::ReadlineError};
 use std::collections::HashMap;
 use std::io::{ErrorKind, IsTerminal, stdin};
+use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -314,6 +315,49 @@ pub struct PumpkinServer {
     standalone: bool,
 }
 
+/// Extract and compile `mods/*.zip`, copy WASM into `plugins/`, `dlopen` native libs.
+/// Times go to the log (standalone and integrated).
+async fn prepare_zip_mods(advanced: &AdvancedConfiguration) {
+    if !advanced.mods.enabled {
+        return;
+    }
+    let mods = advanced.mods.clone();
+    let plugins_dir = PathBuf::from(&advanced.plugins.dir);
+    match tokio::task::spawn_blocking(move || prepare_zip_mods_blocking(&mods, plugins_dir)).await {
+        Ok(()) => {}
+        Err(join_error) => error!("mods prepare task failed: {join_error}"),
+    }
+}
+
+fn prepare_zip_mods_blocking(config: &pumpkin_config::ModsConfig, plugins_dir: PathBuf) {
+    use pumpkin_mod::{PrepareOpts, Side, load_native, prepare};
+    let mods_dir = PathBuf::from(&config.dir);
+    let opts = PrepareOpts {
+        cache_dir: mods_dir.join(".cache"),
+        plugins_dir: Some(plugins_dir),
+        compile_source: config.compile_source,
+        mods_dir,
+        side: Side::Server,
+    };
+    match prepare(&opts, |_| {}) {
+        Ok(report) => {
+            info!(
+                "Zip mods: {} ready in {}ms",
+                report.mods.len(),
+                report.total_millis
+            );
+            for prepared in report.mods {
+                if let Some(lib) = &prepared.native_lib
+                    && let Err(error) = load_native(lib)
+                {
+                    error!("native mod {}: {error}", prepared.manifest.id);
+                }
+            }
+        }
+        Err(error) => error!("zip mods: {error}"),
+    }
+}
+
 impl PumpkinServer {
     pub fn log_info(&self, message: &str) {
         tracing::info!(target: "plugin", "{}", message);
@@ -326,6 +370,7 @@ impl PumpkinServer {
         plugin_loaders: Vec<Arc<dyn PluginLoader>>,
         standalone: bool,
     ) -> Result<Self, ServerSetupError> {
+        prepare_zip_mods(&advanced_config).await;
         let server = Server::new(
             basic_config,
             advanced_config,

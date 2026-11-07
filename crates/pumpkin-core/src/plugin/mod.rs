@@ -36,7 +36,9 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// that makes old binary plugins incompatible.
 pub const PLUGIN_API_VERSION: u32 = 5;
 
-const PLUGIN_DIR: &str = "./plugins";
+fn plugin_dir(server: &Server) -> &Path {
+    Path::new(&server.advanced_config.plugins.dir)
+}
 
 /// A trait for handling events dynamically.
 ///
@@ -298,13 +300,13 @@ impl PluginManager {
         })
         .map_err(|e| ManagerError::IoError(std::io::Error::other(e)))?;
 
-        let plugin_dir = Path::new(PLUGIN_DIR);
+        let plugin_dir = plugin_dir(server).to_path_buf();
         if !plugin_dir.exists() {
-            std::fs::create_dir_all(plugin_dir)?;
+            std::fs::create_dir_all(&plugin_dir)?;
         }
 
         watcher
-            .watch(plugin_dir, RecursiveMode::NonRecursive)
+            .watch(&plugin_dir, RecursiveMode::NonRecursive)
             .map_err(|e| ManagerError::IoError(std::io::Error::other(e)))?;
 
         let manager = self.clone();
@@ -685,7 +687,7 @@ impl PluginManager {
         self: &Arc<Self>,
         server: &Arc<Server>,
     ) -> Result<std::time::Duration, ManagerError> {
-        let path = Path::new(PLUGIN_DIR);
+        let path = plugin_dir(server);
 
         if !path.exists() {
             std::fs::create_dir(path)?;
@@ -947,7 +949,7 @@ impl PluginManager {
                     )));
                 }
 
-                let cache_path = Path::new(PLUGIN_DIR).join("permission_cache.json");
+                let cache_path = plugin_dir(server).join("permission_cache.json");
                 let mut cache = cache::PermissionCache::load(&cache_path).await;
 
                 let (allowed, _) = self

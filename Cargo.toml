@@ -13,6 +13,7 @@ members = [
     "crates/pumpkin-gametest",
     "crates/pumpkin-inventory",
     "crates/pumpkin-macros",
+    "crates/pumpkin-mod",
     "crates/pumpkin-nbt",
     "crates/pumpkin-plugin-api",
     "crates/pumpkin-plugin-runtime",
@@ -215,6 +216,7 @@ pumpkin-data = { path = "crates/pumpkin-data", default-features = false }
 pumpkin-gametest = { path = "crates/pumpkin-gametest", default-features = false }
 pumpkin-inventory = { path = "crates/pumpkin-inventory", default-features = false }
 pumpkin-macros = { path = "crates/pumpkin-macros", default-features = false }
+pumpkin-mod = { path = "crates/pumpkin-mod", default-features = false }
 pumpkin-nbt = { path = "crates/pumpkin-nbt", default-features = false }
 pumpkin-plugin-api = { path = "crates/pumpkin-plugin-api", default-features = false }
 pumpkin-plugin-runtime = { path = "crates/pumpkin-plugin-runtime", default-features = false }
