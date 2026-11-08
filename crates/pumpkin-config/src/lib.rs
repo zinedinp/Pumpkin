@@ -45,9 +45,12 @@ pub use plugins::{PluginOverride, PluginsConfig};
 pub use pvp::PVPConfig;
 pub use server_links::ServerLinksConfig;
 pub use telemetry::TelemetryConfig;
+pub use update_checker::UpdateCheckerConfig;
 
 /// Telemetry configuration options.
 pub mod telemetry;
+/// Update checker configuration options.
+pub mod update_checker;
 
 mod commands;
 
@@ -181,6 +184,8 @@ pub struct AdvancedConfiguration {
     pub mods: ModsConfig,
     /// Advancement configuration
     pub advancement: AdvancementConfig,
+    /// Update checker configuration.
+    pub update_checker: UpdateCheckerConfig,
 }
 
 /// Basic configuration for core server settings.

@@ -64,6 +64,7 @@ pub mod net;
 pub mod plugin;
 pub mod server;
 pub mod telemetry;
+pub mod update_checker;
 pub mod world;
 
 pub struct LoggingConfig {
@@ -584,6 +585,7 @@ impl PumpkinServer {
             .await;
 
         self.server.start_telemetry();
+        self.server.start_update_checker();
         self.server.management_hub.broadcast_server_started();
 
         while !SHOULD_STOP.load(Ordering::Relaxed) {
