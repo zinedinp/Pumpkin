@@ -926,10 +926,69 @@ impl TextComponentBase {
     }
 }
 
+/// `ComponentSerialization.CODEC`'s short forms, as the full compound:
+/// a string, number or boolean is that text, a list its first component
+/// with the rest as `extra`; inside `extra` and `with` as well (servers send
+/// `"extra": ["Navigator"]`).
+fn expand_short_forms(value: serde_json::Value) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => serde_json::json!({ "text": text }),
+        Value::Number(n) => serde_json::json!({ "text": n.to_string() }),
+        Value::Bool(b) => serde_json::json!({ "text": b.to_string() }),
+        Value::Array(list) => {
+            let mut parts = list.into_iter().map(expand_short_forms);
+            let mut first = match parts.next() {
+                Some(Value::Object(first)) => first,
+                _ => serde_json::Map::new(),
+            };
+            let rest: Vec<Value> = parts.collect();
+            if !rest.is_empty() {
+                let mut extra = match first.remove("extra") {
+                    Some(Value::Array(extra)) => extra,
+                    _ => Vec::new(),
+                };
+                extra.extend(rest);
+                first.insert("extra".to_string(), Value::Array(extra));
+            }
+            first
+                .entry("text")
+                .or_insert_with(|| Value::String(String::new()));
+            Value::Object(first)
+        }
+        Value::Object(mut map) => {
+            for key in ["extra", "with"] {
+                if let Some(Value::Array(list)) = map.remove(key) {
+                    let list = list.into_iter().map(expand_short_forms).collect();
+                    map.insert(key.to_string(), Value::Array(list));
+                }
+            }
+            Value::Object(map)
+        }
+        other => other,
+    }
+}
+
 fn nbt_compound_to_json(compound: &pumpkin_nbt::NbtCompound) -> serde_json::Value {
+    // A style's flags are `Codec.BOOL`, which NBT writes as a byte
+    // (`italic: 0b`, as servers turn off a custom name's italic).
+    const FLAGS: [&str; 6] = [
+        "bold",
+        "italic",
+        "underlined",
+        "strikethrough",
+        "obfuscated",
+        "interpret",
+    ];
     let mut map = serde_json::Map::new();
     for (k, v) in &compound.child_tags {
-        map.insert(k.to_string(), nbt_tag_to_json(v));
+        let value = match v {
+            pumpkin_nbt::tag::NbtTag::Byte(b) if FLAGS.contains(&k.as_ref()) => {
+                serde_json::Value::Bool(*b != 0)
+            }
+            _ => nbt_tag_to_json(v),
+        };
+        map.insert(k.to_string(), value);
     }
     serde_json::Value::Object(map)
 }
@@ -1355,7 +1414,8 @@ impl TextComponent {
     /// Parses a text component from its NBT representation
     #[must_use]
     pub fn from_nbt(tag: &pumpkin_nbt::tag::NbtTag) -> Self {
-        serde_json::from_value(nbt_tag_to_json(tag)).unwrap_or_else(|_| Self::empty())
+        serde_json::from_value(expand_short_forms(nbt_tag_to_json(tag)))
+            .unwrap_or_else(|_| Self::empty())
     }
 
     /// Creates a new text component with plain text content.
@@ -2244,6 +2304,35 @@ mod test {
 mod custom_name_nbt_tests {
     use super::TextComponent;
     use pumpkin_nbt::tag::NbtTag;
+
+    #[test]
+    fn plain_strings_in_extra_are_text() {
+        let mut inner = pumpkin_nbt::compound::NbtCompound::new();
+        inner.put_string("text", String::new());
+        inner.put_string("color", "red".to_string());
+        inner.put(
+            "extra",
+            NbtTag::List(vec![NbtTag::String("Navigator".into())]),
+        );
+        let mut name = pumpkin_nbt::compound::NbtCompound::new();
+        name.put_string("text", String::new());
+        name.put("italic", NbtTag::Byte(0));
+        name.put("extra", NbtTag::List(vec![NbtTag::Compound(inner)]));
+        let component = TextComponent::from_nbt(&NbtTag::Compound(name));
+        assert_eq!(component.get_text(), "Navigator");
+    }
+
+    #[test]
+    fn style_flags_written_as_bytes_are_read() {
+        let mut name = pumpkin_nbt::compound::NbtCompound::new();
+        name.put_string("text", "Navigator".to_string());
+        name.put("italic", NbtTag::Byte(0));
+        name.put("bold", NbtTag::Byte(1));
+        let component = TextComponent::from_nbt(&NbtTag::Compound(name));
+        assert_eq!(component.0.style.italic, Some(false));
+        assert_eq!(component.0.style.bold, Some(true));
+        assert_eq!(component.get_text(), "Navigator");
+    }
 
     #[test]
     fn plain_string_tag_is_literal_text() {
