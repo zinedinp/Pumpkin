@@ -3177,6 +3177,7 @@ dependencies = [
 [[package]]
 name = "pumpkin-mod"
 version = "0.2.2+26.3-26.60"
+source = "git+https://github.com/zinedinp/pumpkin-mod?branch=main#0b120d154812787abe429eb7d4837530f32e1bc8"
 dependencies = [
  "flate2",
  "hex",

@@ -9,23 +9,28 @@
 //   on load. Anvil already saves names.
 // - A native mod can only say "id + name". Hardness, blast resistance and
 //   tool requirement are fixed in `pumpkin_mod::activate` (5.0 / 6.0 / true);
-//   they need a grown `HostVTable` (ABI 2) or a JSON sidecar per block.
-// - Full opaque cubes only: no custom shapes, properties/multi-state, light,
-//   sounds (sound_type 27 = iron), map colour, loot table (drops nothing),
-//   tags (mineable/needs_tool), recipes, block entities, standalone items.
+//   they need a grown `HostVTable` (ABI 2). `data/<ns>/blocks/*.json` can
+//   say all of [`BlockSpec`].
+// - Cube shapes only (full, or none to walk through): no custom shapes,
+//   properties/multi-state, sounds (sound_type 27 = iron), map colour, loot
+//   table (drops nothing), tags (mineable/needs_tool), recipes, block
+//   entities, standalone items.
 // - Server-only mods shift ids on the client: Melon prepares with
 //   `Side::Both`, the server with `Side::Server`. Ids must come from one
 //   side-independent list (e.g. every enabled mod's `data/` blocks).
-// - `block_state_flags` in Melon and `Block::from_*` fall back through a
-//   `Mutex<Vec>` linear scan; switch to an index `Vec` read via `RwLock`
-//   or `OnceLock` once the set is frozen after `activate`.
+// - Name lookups (`block_from_name`, `item_from_*`) still scan a
+//   `Mutex<Vec>`; the id lookups read lock-free slots (`state_at`,
+//   `block_at`), which `BlockState::from_id` and `Block::from_id` use.
 // - Caps (`BLOCK_CAP`, `STATE_CAP` 256, `ITEM_BASE` 17000) are fixed; `Full`
 //   is only an error log. Bedrock network ids for mod states are the raw id.
 // - Codegen (`tools/pumpkin-codegen/src/{block,item}.rs`) hand-writes the
 //   overlay `else` branch in each lookup. Only blocks and items have it;
 //   fluids, sounds, entity types and tags have no mod hook yet.
 use crate::block_properties::NoteblockInstrument;
-use crate::block_state::PistonBehavior;
+use crate::block_state::{
+    CAN_OCCLUDE, IS_FULL_CUBE, IS_SOLID, IS_SOLID_BLOCK, IS_SOLID_RENDER, PistonBehavior,
+    TOOL_REQUIRED,
+};
 use crate::data_component::DataComponent;
 use crate::data_component_impl::{
     DataComponentImpl, ItemModelImpl, ItemNameImpl, MaxStackSizeImpl,
@@ -34,6 +39,7 @@ use crate::item::Item;
 use crate::{Block, BlockId, BlockState, BlockStateId};
 use serde::Deserialize;
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
@@ -43,6 +49,201 @@ pub const BLOCK_CAP: u16 = 256;
 pub const STATE_CAP: u16 = 256;
 /// First numeric item id used for zip-mod block items (vanilla tops out ~1656).
 const ITEM_BASE: u16 = 17_000;
+
+/// How a client draws a mod block, beyond what [`BlockState`] says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderLayer {
+    /// From the textures: opaque texels solid, clear ones cutout, partly
+    /// clear ones translucent.
+    #[default]
+    Auto,
+    Solid,
+    Cutout,
+    Translucent,
+}
+
+/// What a client needs to draw a mod block that [`BlockState`] has no
+/// field for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RenderHints {
+    pub layer: RenderLayer,
+    /// Corner shading on its faces (a model's `ambientocclusion`).
+    pub ambient_occlusion: bool,
+}
+
+/// Everything a zip-mod block can say about itself. [`Default`] is a full
+/// opaque cube like an iron block.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct BlockSpec {
+    pub hardness: f32,
+    pub blast_resistance: f32,
+    pub requires_tool: bool,
+    /// Entities collide with its full cube; `false` walks through it.
+    pub collides: bool,
+    pub render: RenderSpec,
+}
+
+/// The `render` part of a [`BlockSpec`].
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct RenderSpec {
+    /// A full, opaque cube (`isSolidRender`): neighbours' faces against it
+    /// are hidden and it darkens the corners next to it.
+    pub solid: bool,
+    /// Hides what is behind it from the client's culling (`canOcclude`).
+    /// Defaults to `solid`.
+    pub occludes: Option<bool>,
+    /// Light it gives off, 0-15.
+    pub luminance: u8,
+    /// Light it takes away passing through, 0-15. Defaults to 15 for a
+    /// solid block, else 0.
+    pub light_opacity: Option<u8>,
+    pub layer: RenderLayer,
+    pub ambient_occlusion: bool,
+}
+
+impl Default for BlockSpec {
+    fn default() -> Self {
+        Self {
+            hardness: 5.0,
+            blast_resistance: 6.0,
+            requires_tool: false,
+            collides: true,
+            render: RenderSpec::default(),
+        }
+    }
+}
+
+impl Default for RenderSpec {
+    fn default() -> Self {
+        Self {
+            solid: true,
+            occludes: None,
+            luminance: 0,
+            light_opacity: None,
+            layer: RenderLayer::Auto,
+            ambient_occlusion: true,
+        }
+    }
+}
+
+impl BlockSpec {
+    /// [`BlockState::state_flags`] for this block.
+    #[must_use]
+    pub fn state_flags(&self) -> u16 {
+        let render = &self.render;
+        let mut flags = 0;
+        if self.requires_tool {
+            flags |= TOOL_REQUIRED;
+        }
+        if self.collides {
+            flags |= IS_SOLID | IS_FULL_CUBE;
+            if render.solid {
+                flags |= IS_SOLID_BLOCK;
+            }
+        }
+        if render.solid {
+            flags |= IS_SOLID_RENDER;
+        }
+        if render.occludes.unwrap_or(render.solid) {
+            flags |= CAN_OCCLUDE;
+        }
+        flags
+    }
+
+    /// [`BlockState::opacity`].
+    #[must_use]
+    pub fn light_opacity(&self) -> u8 {
+        self.render
+            .light_opacity
+            .unwrap_or(if self.render.solid { 15 } else { 0 })
+            .min(15)
+    }
+
+    #[must_use]
+    pub fn hints(&self) -> RenderHints {
+        RenderHints {
+            layer: self.render.layer,
+            ambient_occlusion: self.render.ambient_occlusion,
+        }
+    }
+}
+
+/// One slot per extra id, written once while registering (under the
+/// table's lock) and read without one, from `const fn`s too:
+/// [`BlockState::from_id`] and [`Block::from_id`] stay `const` for
+/// vanilla ids and find mod ids here at run time.
+struct Slots<T: 'static, const N: usize>(UnsafeCell<[Option<&'static T>; N]>);
+
+// SAFETY: a slot goes from `None` to `Some` once, before its id is handed
+// out (registration returns it), and never changes again. Readers of a
+// registered id therefore only see the finished pointer.
+unsafe impl<T: Sync, const N: usize> Sync for Slots<T, N> {}
+
+impl<T: 'static, const N: usize> Slots<T, N> {
+    const fn new() -> Self {
+        Self(UnsafeCell::new([None; N]))
+    }
+
+    const fn get(&self, index: usize) -> Option<&'static T> {
+        if index >= N {
+            return None;
+        }
+        // SAFETY: see `impl Sync`.
+        unsafe { (*self.0.get())[index] }
+    }
+
+    /// # Safety
+    /// Only while holding the table's lock, once per slot.
+    unsafe fn set(&self, index: usize, value: &'static T) {
+        unsafe { (*self.0.get())[index] = Some(value) };
+    }
+}
+
+const STATES: usize = STATE_CAP as usize;
+const BLOCKS: usize = BLOCK_CAP as usize;
+static STATE_SLOTS: Slots<BlockState, STATES> = Slots::new();
+static BLOCK_SLOTS: Slots<Block, BLOCKS> = Slots::new();
+/// The block of each extra state, by state slot.
+static STATE_BLOCK_SLOTS: Slots<Block, STATES> = Slots::new();
+static HINT_SLOTS: Slots<RenderHints, STATES> = Slots::new();
+
+/// The registered state with extra id `id`, if any. `const` so that
+/// [`BlockState::from_id`] can fall back to it.
+#[must_use]
+pub const fn state_at(id: u16) -> Option<&'static BlockState> {
+    match id.checked_sub(BlockStateId::COUNT) {
+        Some(index) => STATE_SLOTS.get(index as usize),
+        None => None,
+    }
+}
+
+/// The registered block with extra id `id`, if any.
+#[must_use]
+pub const fn block_at(id: u16) -> Option<&'static Block> {
+    match id.checked_sub(BlockId::COUNT) {
+        Some(index) => BLOCK_SLOTS.get(index as usize),
+        None => None,
+    }
+}
+
+/// The block of the registered extra state `state_id`, if any.
+#[must_use]
+pub const fn block_of_state_at(state_id: u16) -> Option<&'static Block> {
+    match state_id.checked_sub(BlockStateId::COUNT) {
+        Some(index) => STATE_BLOCK_SLOTS.get(index as usize),
+        None => None,
+    }
+}
+
+/// How a client draws the registered extra state `state_id`.
+#[must_use]
+pub fn render_hints(state_id: u16) -> Option<RenderHints> {
+    let index = state_id.checked_sub(BlockStateId::COUNT)?;
+    HINT_SLOTS.get(index as usize).copied()
+}
 
 struct Entry {
     id: &'static str,
@@ -91,28 +292,19 @@ pub fn item_from_id(id: u16) -> Option<&'static Item> {
 /// Block overlay for [`Block::from_id`].
 #[must_use]
 pub fn block_from_id(id: u16) -> Option<&'static Block> {
-    lock()
-        .iter()
-        .find(|e| e.block.id.as_u16() == id)
-        .map(|e| e.block)
+    block_at(id)
 }
 
 /// State overlay for [`BlockState::from_id`].
 #[must_use]
 pub fn state_from_id(id: u16) -> Option<&'static BlockState> {
-    lock()
-        .iter()
-        .find(|e| e.state.id.as_u16() == id)
-        .map(|e| e.state)
+    state_at(id)
 }
 
 /// [`BlockId`] for an extra state id.
 #[must_use]
 pub fn block_id_from_state(state_id: u16) -> Option<BlockId> {
-    lock()
-        .iter()
-        .find(|e| e.state.id.as_u16() == state_id)
-        .map(|e| e.block.id)
+    block_of_state_at(state_id).map(|block| block.id)
 }
 
 /// Block overlay for [`Block::from_item_id`].
@@ -130,25 +322,15 @@ pub fn extra_state_ids() -> Vec<u16> {
     lock().iter().map(|e| e.state.id.as_u16()).collect()
 }
 
+/// `data/<ns>/blocks/*.json`: an id, a name, and the rest of a
+/// [`BlockSpec`] (every field optional).
 #[derive(Deserialize)]
 struct BlockFile {
     id: String,
     #[serde(default)]
     name: Option<String>,
-    #[serde(default = "default_hardness")]
-    hardness: f32,
-    #[serde(default = "default_blast")]
-    blast_resistance: f32,
-    #[serde(default)]
-    requires_tool: bool,
-}
-
-fn default_hardness() -> f32 {
-    5.0
-}
-
-fn default_blast() -> f32 {
-    6.0
+    #[serde(flatten)]
+    spec: BlockSpec,
 }
 
 /// Read `data/<ns>/blocks/*.json` from an extracted zip-mod folder.
@@ -178,20 +360,14 @@ pub fn load_extracted_dir(dir: &Path) {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(file) = serde_json::from_str::<BlockFile>(&text) else {
-            continue;
+        let file = match serde_json::from_str::<BlockFile>(&text) {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!("mod block {} unreadable: {e}", path.display());
+                continue;
+            }
         };
-        let display = file
-            .name
-            .as_deref()
-            .unwrap_or(file.id.rsplit(':').next().unwrap_or(file.id.as_str()));
-        let _ = register_simple_block(
-            &file.id,
-            display,
-            file.hardness,
-            file.blast_resistance,
-            file.requires_tool,
-        );
+        let _ = register_block(&file.id, &file.spec);
     }
 }
 
@@ -205,6 +381,20 @@ pub fn register_simple_block(
     requires_tool: bool,
 ) -> Result<&'static Block, RegisterError> {
     let _ = display_name;
+    register_block(
+        id,
+        &BlockSpec {
+            hardness,
+            blast_resistance,
+            requires_tool,
+            ..BlockSpec::default()
+        },
+    )
+}
+
+/// Register a block as `spec` says, and its item. Same `id` a second time
+/// is a no-op that returns the first one.
+pub fn register_block(id: &str, spec: &BlockSpec) -> Result<&'static Block, RegisterError> {
     if id.is_empty() {
         return Err(RegisterError::EmptyId);
     }
@@ -212,7 +402,7 @@ pub fn register_simple_block(
     if let Some(existing) = guard.iter().find(|e| e.id == id) {
         return Ok(existing.block);
     }
-    if guard.len() >= BLOCK_CAP as usize {
+    if guard.len() >= BLOCK_CAP.min(STATE_CAP) as usize {
         return Err(RegisterError::Full);
     }
     let index = u16::try_from(guard.len()).map_err(|_| RegisterError::Full)?;
@@ -253,22 +443,19 @@ pub fn register_simple_block(
         crafting_remainder: None,
     }));
 
-    // Iron-block flags (full opaque cube). Bit 2 is `TOOL_REQUIRED`.
-    let mut state_flags: u16 = 3524;
-    if !requires_tool {
-        state_flags &= !4;
-    }
+    // Shape 0 is the full cube.
+    const FULL_CUBE: &[u16] = &[0];
     let state = Box::leak(Box::new(BlockState {
         id: state_id,
-        state_flags,
-        side_flags: 255,
+        state_flags: spec.state_flags(),
+        side_flags: if spec.collides { 255 } else { 0 },
         instrument: NoteblockInstrument::IronXylophone,
-        luminance: 0,
+        luminance: spec.render.luminance.min(15),
         piston_behavior: PistonBehavior::Normal,
-        hardness,
-        collision_shapes: &[0],
-        outline_shapes: &[0],
-        opacity: 15,
+        hardness: spec.hardness,
+        collision_shapes: if spec.collides { FULL_CUBE } else { &[] },
+        outline_shapes: FULL_CUBE,
+        opacity: spec.light_opacity(),
         sound_type: 27,
         block_entity_type: u16::MAX,
     }));
@@ -277,8 +464,8 @@ pub fn register_simple_block(
     let block = Box::leak(Box::new(Block {
         id: block_id,
         name: registry_key,
-        hardness,
-        blast_resistance,
+        hardness: spec.hardness,
+        blast_resistance: spec.blast_resistance,
         map_color: 6,
         slipperiness: 0.6,
         velocity_multiplier: 1.0,
@@ -292,6 +479,16 @@ pub fn register_simple_block(
         experience: None,
         loot_table: None,
     }));
+    let hints: &'static RenderHints = Box::leak(Box::new(spec.hints()));
+    let slot = usize::from(index);
+    // SAFETY: under the table's lock, and `index` is new: each slot is
+    // set once, before `register_block` hands out its ids.
+    unsafe {
+        STATE_SLOTS.set(slot, state);
+        BLOCK_SLOTS.set(slot, block);
+        STATE_BLOCK_SLOTS.set(slot, block);
+        HINT_SLOTS.set(slot, hints);
+    }
     guard.push(Entry {
         id: registry_key,
         block,
@@ -312,8 +509,6 @@ mod tests {
     use super::*;
 
     #[test]
-    // TODO: update mod handling to use a different codegen.
-    #[ignore = "mod ids hit the unchecked vanilla block lookup until the extra mod lookup exists"]
     fn stealframe_registers_as_placeable_block_item() {
         let block =
             register_simple_block("hello:stealframe", "Stealframe", 5.0, 6.0, true).unwrap();
@@ -366,5 +561,44 @@ mod tests {
             Block::from_item_id(item.id).map(|b| b.name),
             Some("hello:stealframe")
         );
+    }
+
+    #[test]
+    fn the_default_spec_is_an_iron_block() {
+        let spec = BlockSpec::default();
+        let iron = Block::IRON_BLOCK.default_state;
+        assert_eq!(spec.state_flags(), iron.state_flags & !TOOL_REQUIRED);
+        assert_eq!(spec.light_opacity(), iron.opacity);
+    }
+
+    #[test]
+    fn render_stats_reach_the_block_state() {
+        let spec: BlockSpec = serde_json::from_str(
+            r#"{"collides": false, "render": {"solid": false, "luminance": 12, "layer": "cutout", "ambient_occlusion": false}}"#,
+        )
+        .unwrap();
+        let block = register_block("probe:lamp_grass", &spec).unwrap();
+        let state = BlockState::from_id(block.default_state.id);
+        assert_eq!(state.id, block.default_state.id);
+        assert!(!state.is_solid_render() && !state.can_occlude() && !state.is_air());
+        assert_eq!((state.luminance, state.opacity), (12, 0));
+        assert_eq!(state.get_block_collision_shapes().count(), 0);
+        assert_eq!(Block::from_state_id(state.id).name, "probe:lamp_grass");
+        assert_eq!(
+            render_hints(state.id.as_u16()),
+            Some(RenderHints {
+                layer: RenderLayer::Cutout,
+                ambient_occlusion: false,
+            })
+        );
+    }
+
+    #[test]
+    fn an_unregistered_extra_id_reads_as_air() {
+        let id = BlockStateId::new(BlockStateId::COUNT + STATE_CAP - 1).unwrap();
+        assert!(BlockState::from_id(id).is_air());
+        assert_eq!(Block::from_state_id(id).id, BlockId::AIR);
+        let block = BlockId::new(BlockId::COUNT + BLOCK_CAP - 1).unwrap();
+        assert_eq!(Block::from_id(block).id, BlockId::AIR);
     }
 }

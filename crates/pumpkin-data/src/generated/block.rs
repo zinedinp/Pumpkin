@@ -11473,7 +11473,14 @@ impl BlockState {
     #[inline]
     #[must_use]
     pub const fn from_id(id: BlockStateId) -> &'static Self {
-        unsafe { lookup(&mappings::BLOCK_STATES, id.as_u16()) }
+        let raw = id.as_u16();
+        if raw < BlockStateId::STATE_COUNT {
+            return unsafe { lookup(&mappings::BLOCK_STATES, raw) };
+        }
+        match crate::mod_registry::state_at(raw) {
+            Some(state) => state,
+            None => Block::AIR.default_state,
+        }
     }
     #[doc = r" Get a block state from a state id and the corresponding block."]
     #[inline]
@@ -11485,7 +11492,11 @@ impl BlockState {
     }
     #[must_use]
     pub const fn to_be_network_id(id: BlockStateId) -> u32 {
-        unsafe { *lookup(Self::STATE_ID_TO_BEDROCK, id.as_u16()) }
+        let raw = id.as_u16();
+        if raw < BlockStateId::STATE_COUNT {
+            return unsafe { *lookup(Self::STATE_ID_TO_BEDROCK, raw) };
+        }
+        raw as u32
     }
 }
 impl BlockStateId {
@@ -572983,7 +572994,14 @@ impl Block {
     #[inline]
     #[must_use]
     pub const fn from_id(id: BlockId) -> &'static Self {
-        unsafe { lookup(&mappings::BLOCKS, id.as_u16()) }
+        let raw = id.as_u16();
+        if raw < BlockId::BLOCK_COUNT {
+            return unsafe { lookup(&mappings::BLOCKS, raw) };
+        }
+        match crate::mod_registry::block_at(raw) {
+            Some(block) => block,
+            None => unsafe { lookup(&mappings::BLOCKS, 0) },
+        }
     }
     #[doc = r" Get a [`Block`] from a state id"]
     #[inline]
@@ -577425,7 +577443,14 @@ impl BlockId {
     #[inline]
     #[must_use]
     pub const fn from_state_id(id: BlockStateId) -> BlockId {
-        unsafe { *lookup(&mappings::BLOCK_ID_FROM_STATE_ID, id.as_u16()) }
+        let raw = id.as_u16();
+        if raw < BlockStateId::STATE_COUNT {
+            return unsafe { *lookup(&mappings::BLOCK_ID_FROM_STATE_ID, raw) };
+        }
+        match crate::mod_registry::block_of_state_at(raw) {
+            Some(block) => block.id,
+            None => BlockId::AIR,
+        }
     }
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

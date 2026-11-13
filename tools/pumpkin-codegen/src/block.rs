@@ -1793,8 +1793,17 @@ pub fn build() -> TokenStream {
             #[inline]
             #[must_use]
             pub const fn from_id(id: BlockStateId) -> &'static Self {
-                // SAFETY: BlockStateId < STATE_COUNT, see layout asserts.
-                unsafe { lookup(&mappings::BLOCK_STATES, id.as_u16()) }
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    // SAFETY: raw < STATE_COUNT, the table's length.
+                    return unsafe { lookup(&mappings::BLOCK_STATES, raw) };
+                }
+                // A zip-mod state past the vanilla table; air if none is
+                // registered under that id.
+                match crate::mod_registry::state_at(raw) {
+                    Some(state) => state,
+                    None => Block::AIR.default_state,
+                }
             }
 
             #[doc = r" Get a block state from a state id and the corresponding block."]
@@ -1808,8 +1817,13 @@ pub fn build() -> TokenStream {
 
             #[must_use]
             pub const fn to_be_network_id(id: BlockStateId) -> u32 {
-                // SAFETY: BlockStateId < STATE_COUNT, see layout asserts.
-                unsafe { *lookup(Self::STATE_ID_TO_BEDROCK, id.as_u16()) }
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    // SAFETY: raw < STATE_COUNT, the table's length.
+                    return unsafe { *lookup(Self::STATE_ID_TO_BEDROCK, raw) };
+                }
+                // Zip-mod states go out under their raw id.
+                raw as u32
             }
         }
 
@@ -1929,8 +1943,18 @@ pub fn build() -> TokenStream {
             #[inline]
             #[must_use]
             pub const fn from_id(id: BlockId) -> &'static Self {
-                // SAFETY: BlockId < BLOCK_COUNT, see layout asserts.
-                unsafe { lookup(&mappings::BLOCKS, id.as_u16()) }
+                let raw = id.as_u16();
+                if raw < BlockId::BLOCK_COUNT {
+                    // SAFETY: raw < BLOCK_COUNT, the table's length.
+                    return unsafe { lookup(&mappings::BLOCKS, raw) };
+                }
+                // A zip-mod block past the vanilla table; air if none is
+                // registered under that id.
+                match crate::mod_registry::block_at(raw) {
+                    Some(block) => block,
+                    // SAFETY: air is block 0.
+                    None => unsafe { lookup(&mappings::BLOCKS, 0) },
+                }
             }
 
             /// Get a [`Block`] from a state id
@@ -1996,8 +2020,15 @@ pub fn build() -> TokenStream {
             #[inline]
             #[must_use]
             pub const fn from_state_id(id: BlockStateId) -> BlockId {
-                // SAFETY: BlockStateId < STATE_COUNT, see layout asserts.
-                unsafe { *lookup(&mappings::BLOCK_ID_FROM_STATE_ID, id.as_u16()) }
+                let raw = id.as_u16();
+                if raw < BlockStateId::STATE_COUNT {
+                    // SAFETY: raw < STATE_COUNT, the table's length.
+                    return unsafe { *lookup(&mappings::BLOCK_ID_FROM_STATE_ID, raw) };
+                }
+                match crate::mod_registry::block_of_state_at(raw) {
+                    Some(block) => block.id,
+                    None => BlockId::AIR,
+                }
             }
         }
 

@@ -412,16 +412,16 @@ impl std::fmt::Display for BlockStateId {
 // state_flags
 const IS_AIR: u16 = 1 << 0;
 const BURNABLE: u16 = 1 << 1;
-const TOOL_REQUIRED: u16 = 1 << 2;
+pub(crate) const TOOL_REQUIRED: u16 = 1 << 2;
 const SIDED_TRANSPARENCY: u16 = 1 << 3;
 const REPLACEABLE: u16 = 1 << 4;
 const IS_LIQUID: u16 = 1 << 5;
-const IS_SOLID: u16 = 1 << 6;
-const IS_FULL_CUBE: u16 = 1 << 7;
-const IS_SOLID_BLOCK: u16 = 1 << 8;
+pub(crate) const IS_SOLID: u16 = 1 << 6;
+pub(crate) const IS_FULL_CUBE: u16 = 1 << 7;
+pub(crate) const IS_SOLID_BLOCK: u16 = 1 << 8;
 const HAS_RANDOM_TICKS: u16 = 1 << 9;
-const IS_SOLID_RENDER: u16 = 1 << 10;
-const CAN_OCCLUDE: u16 = 1 << 11;
+pub(crate) const IS_SOLID_RENDER: u16 = 1 << 10;
+pub(crate) const CAN_OCCLUDE: u16 = 1 << 11;
 const HAS_ANALOG_OUTPUT_SIGNAL: u16 = 1 << 12;
 // codegen flag
 const IS_WATERLOGGED: u16 = 1 << 13;
