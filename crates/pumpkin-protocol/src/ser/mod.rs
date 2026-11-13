@@ -34,6 +34,21 @@ impl serde::de::Error for ReadingError {
     }
 }
 
+/// Vanilla `Utf8String.read` uses Netty's UTF-8 decoder with
+/// `CodingErrorAction.REPLACE` (U+FFFD per bad sequence). Plugins on
+/// Paper often put Latin-1 umlauts in item lore / custom model strings;
+/// rejecting the whole ItemStack drops the slot.
+fn protocol_utf8(bytes: &[u8]) -> Cow<'_, str> {
+    match str::from_utf8(bytes) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => String::from_utf8_lossy(bytes),
+    }
+}
+
+fn protocol_utf8_exceeds_char_bound(text: &str, bound: usize) -> bool {
+    text.encode_utf16().nth(bound).is_some()
+}
+
 #[derive(Debug, Error)]
 pub enum WritingError {
     #[error("IO error: {0}")]
@@ -416,16 +431,18 @@ impl<'a> NetworkReadSliceExt<'a> for &'a [u8] {
         }
 
         let bytes = self.read_slice_borrowed(bytes_len)?;
-        let string =
-            std::str::from_utf8(bytes).map_err(|e| ReadingError::Message(e.to_string()))?;
-
-        if string.encode_utf16().nth(bound).is_some() {
+        let string = protocol_utf8(bytes);
+        if protocol_utf8_exceeds_char_bound(&string, bound) {
             return Err(ReadingError::TooLarge(format!(
                 "string has too many UTF-16 characters (more than the maximum limit {bound})"
             )));
         }
-
-        Ok(string)
+        match string {
+            Cow::Borrowed(text) => Ok(text),
+            Cow::Owned(_) => Err(ReadingError::Message(
+                "invalid utf-8 in borrowed protocol string".into(),
+            )),
+        }
     }
 
     #[inline]
@@ -654,30 +671,23 @@ impl<R: Read> NetworkReadExt for R {
             let slice = &mut stack_buf[..bytes_len];
             self.read_exact(slice)
                 .map_err(|err| ReadingError::Incomplete(err.to_string()))?;
-
-            let string =
-                std::str::from_utf8(slice).map_err(|e| ReadingError::Message(e.to_string()))?;
-
-            if string.encode_utf16().nth(bound).is_some() {
+            let string = protocol_utf8(slice);
+            if protocol_utf8_exceeds_char_bound(&string, bound) {
                 return Err(ReadingError::TooLarge(format!(
                     "string has too many UTF-16 characters (more than the maximum limit {bound})"
                 )));
             }
-
-            Ok(string.into())
+            Ok(string.into_owned().into())
         } else {
             let mut data = vec![0u8; bytes_len];
             self.read_bytes_to_buf(&mut data)?;
-            let string =
-                std::str::from_utf8(&data).map_err(|e| ReadingError::Message(e.to_string()))?;
-
-            if string.encode_utf16().nth(bound).is_some() {
+            let string = protocol_utf8(&data);
+            if protocol_utf8_exceeds_char_bound(&string, bound) {
                 return Err(ReadingError::TooLarge(format!(
                     "string has too many UTF-16 characters (more than the maximum limit {bound})"
                 )));
             }
-
-            Ok(string.into())
+            Ok(string.into_owned().into())
         }
     }
 

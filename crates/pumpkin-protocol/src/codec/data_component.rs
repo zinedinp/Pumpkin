@@ -292,14 +292,11 @@ impl DataComponentCodec<Self> for EnchantmentsImpl {
         }
         let mut enc = Vec::with_capacity(len);
         for _ in 0..len {
-            let id = seq.get_var_int()?.0 as u8;
+            let id = seq.get_var_int()?.0;
             let level = seq.get_var_int()?.0;
-            enc.push((
-                Enchantment::from_id(id).ok_or(ReadingError::Message(
-                    "EnchantmentsImpl Enchantment VarInt Incorrect!".into(),
-                ))?,
-                level,
-            ));
+            if let Some(enchantment) = u8::try_from(id).ok().and_then(Enchantment::from_id) {
+                enc.push((enchantment, level));
+            }
         }
         Ok(Self {
             enchantment: Cow::from(enc),
@@ -894,14 +891,11 @@ impl DataComponentCodec<Self> for StoredEnchantmentsImpl {
 
         let mut stored_enchantments = Vec::with_capacity(len);
         for _ in 0..len {
-            let id = seq.get_var_int()?.0 as u8;
+            let id = seq.get_var_int()?.0;
             let level = seq.get_var_int()?.0;
-            stored_enchantments.push((
-                Enchantment::from_id(id).ok_or(ReadingError::Message(
-                    "StoredEnchantmentsImpl Enchantment VarInt Incorrect!".into(),
-                ))?,
-                level,
-            ));
+            if let Some(enchantment) = u8::try_from(id).ok().and_then(Enchantment::from_id) {
+                stored_enchantments.push((enchantment, level));
+            }
         }
         Ok(Self {
             enchantment: Cow::from(stored_enchantments),
@@ -1437,15 +1431,13 @@ macro_rules! codec_registry_variant {
             }
             fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
                 let id = seq.get_var_int()?.0;
+                // Vanilla `holderRegistry` would fail the packet; a plugin
+                // patch with a leftover id (HugoSMP auction lore) must not
+                // drop the rest of the stack.
                 let variant = usize::try_from(id)
                     .ok()
-                    .and_then(|id| <$variant>::all().get(id))
-                    .ok_or_else(|| {
-                        ReadingError::Message(format!(
-                            "unknown {} id {id}",
-                            stringify!($struct_name)
-                        ))
-                    })?;
+                    .and_then(|id| <$variant>::all().get(id).copied())
+                    .unwrap_or_else(|| <$variant>::all()[0]);
                 Ok(Self {
                     value: Cow::Owned(format!("minecraft:{}", variant.to_name())),
                 })
@@ -1497,7 +1489,7 @@ impl DataComponentCodec<Self> for VillagerVariantImpl {
     fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
         let id = seq.get_var_int()?.0;
         let variant = pumpkin_data::villager::VillagerType::from_i32(id)
-            .ok_or_else(|| ReadingError::Message(format!("unknown VillagerVariantImpl id {id}")))?;
+            .unwrap_or(pumpkin_data::villager::VillagerType::Desert);
         Ok(Self {
             value: Cow::Owned(format!("minecraft:{}", variant.to_name())),
         })
@@ -1515,13 +1507,20 @@ impl DataComponentCodec<Self> for PaintingVariantImpl {
     }
     fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
         let id = seq.get_var_int()?.0;
+        // 0 is an inline holder (`ByteBufCodecs.holder`); we have no direct
+        // painting codec, so that still fails. Unknown registry ids default
+        // like `codec_registry_variant`.
+        if id == 0 {
+            return Err(ReadingError::Message(
+                "unsupported PaintingVariantImpl inline holder".into(),
+            ));
+        }
         let variant = id
             .checked_sub(1)
             .and_then(|id| usize::try_from(id).ok())
             .and_then(|id| pumpkin_data::painting_variant::PaintingVariant::all().get(id))
-            .ok_or_else(|| {
-                ReadingError::Message(format!("unsupported PaintingVariantImpl holder {id}"))
-            })?;
+            .copied()
+            .unwrap_or_else(|| pumpkin_data::painting_variant::PaintingVariant::all()[0]);
         Ok(Self {
             value: Cow::Owned(format!("minecraft:{}", variant.to_name())),
         })
@@ -2506,11 +2505,11 @@ fn read_holder_reference<T: Copy>(
             "Inline {kind} is not supported"
         )));
     }
-    usize::try_from(id)
-        .ok()
-        .and_then(|id| entries.get(id - 1))
-        .copied()
-        .ok_or_else(|| ReadingError::Message(format!("Unknown {kind} reference {id}")))
+    Ok(id
+        .checked_sub(1)
+        .and_then(|id| usize::try_from(id).ok())
+        .and_then(|id| entries.get(id).copied())
+        .unwrap_or(entries[0]))
 }
 
 impl DataComponentCodec<Self> for TrimImpl {
@@ -3602,16 +3601,19 @@ mod tests {
     }
 
     #[test]
-    fn trim_rejects_out_of_range_material_references() {
+    fn trim_unknown_registry_ids_keep_the_first_entry() {
         let past_end = TrimMaterial::all().len() as i32 + 1;
-        for material in [0, past_end, 65537, -65535, i32::MIN] {
+        for material in [past_end, 65537, -65535] {
             let mut encoded = Vec::new();
             encoded.write_var_int(&VarInt(material)).unwrap();
             encoded.write_var_int(&VarInt(1)).unwrap();
-            assert!(
-                TrimImpl::deserialize(&mut encoded.as_slice()).is_err(),
-                "material reference {material} was accepted"
-            );
+            let trim = TrimImpl::deserialize(&mut encoded.as_slice())
+                .unwrap_or_else(|e| panic!("unknown trim material {material} must keep the slot: {e}"));
+            assert_eq!(trim.material_enum(), Some(TrimMaterial::all()[0]));
         }
+        let mut inline = Vec::new();
+        inline.write_var_int(&VarInt(0)).unwrap();
+        inline.write_var_int(&VarInt(1)).unwrap();
+        assert!(TrimImpl::deserialize(&mut inline.as_slice()).is_err());
     }
 }

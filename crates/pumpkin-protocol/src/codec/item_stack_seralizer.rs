@@ -854,3 +854,73 @@ impl From<Option<ItemStack>> for ItemStackOptionalTemplateSerializer<'_> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pumpkin_data::data_component_impl::CustomModelDataImpl;
+
+    /// Vanilla `Utf8String.read` replaces Latin-1 bytes. HugoSMP auction
+    /// lore/custom-model strings do this; dropping the slot hid the item.
+    #[test]
+    fn an_item_stack_with_latin1_in_a_protocol_string_still_decodes() {
+        let mut body = vec![
+            1,  // count
+            1,  // item id (air/stone fallback is fine)
+            1,  // one component to add
+            0,  // none to remove
+            17, // CustomModelData
+            0,  // floats
+            0,  // flags
+            1,  // one string
+        ];
+        let mut text = vec![b'x'; 65];
+        text.push(0xE4); // Latin-1 ä, the byte that used to abort the slot
+        text.extend_from_slice(b"ufer");
+        body.push(text.len() as u8);
+        body.extend_from_slice(&text);
+        body.push(0); // colors
+        let stack = ItemStackSerializer::read(&mut body.as_slice())
+            .expect("vanilla replaces invalid UTF-8")
+            .to_stack();
+        let cmd = stack
+            .get_data_component::<CustomModelDataImpl>()
+            .expect("custom model data");
+        assert!(cmd.strings[0].contains('\u{FFFD}'));
+        assert!(cmd.strings[0].ends_with("ufer"));
+    }
+
+    #[test]
+    fn unknown_holder_registry_ids_keep_the_slot() {
+        // HugoSMP auction lore leftover as a variant id used to drop the
+        // whole SetSlot (custom_model_data never applied). Pig/chicken/cow
+        // share `codec_registry_variant`; villager and painting follow it.
+        for (component, variant_id) in [
+            (89u8, 110u8), // WolfVariant
+            (92, 110),     // FoxVariant
+            (100, 110),    // PigVariant
+            (102, 110),    // CowVariant
+            (104, 110),    // ChickenVariant
+            (108, 110),    // HorseVariant
+            (88, 110),     // VillagerVariant
+            (109, 110),    // PaintingVariant holder (registry id 109)
+            (110, 110),    // LlamaVariant
+        ] {
+            let body = [
+                1u8, // count
+                1,   // item id
+                1,   // one component to add
+                0,   // none to remove
+                component,
+                variant_id,
+            ];
+            ItemStackSerializer::read(&mut body.as_slice()).unwrap_or_else(|e| {
+                panic!("unknown variant on component {component} must keep the stack: {e}")
+            });
+        }
+        // ArmorTrim: two holder references (material, pattern).
+        let trim = [1u8, 1, 1, 0, 58, 110, 110];
+        ItemStackSerializer::read(&mut trim.as_slice())
+            .expect("unknown trim holders must keep the stack");
+    }
+}

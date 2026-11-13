@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 use std::cmp::Reverse;
-use std::{env, fs};
+use std::fs;
 
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
@@ -36,10 +36,7 @@ pub struct UserCache {
 
 impl UserCache {
     fn path() -> std::path::PathBuf {
-        env::current_dir()
-            .unwrap_or_else(|_| ".".into())
-            .join(super::DATA_FOLDER)
-            .join(USER_CACHE_PATH)
+        super::data_dir().join(USER_CACHE_PATH)
     }
 
     #[must_use]

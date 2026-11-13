@@ -5,6 +5,26 @@ use tracing::{debug, error, warn};
 
 const DATA_FOLDER: &str = "data/";
 
+static DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Keeps the JSON data files (user cache, ban and operator lists) in `dir`
+/// instead of `data/` under the working directory, for an embedding
+/// application. Only the first call has an effect.
+pub fn set_data_dir(dir: std::path::PathBuf) {
+    let _ = DATA_DIR.set(dir);
+}
+
+/// Where the JSON data files live: [`set_data_dir`]'s folder, else `data/`
+/// under the working directory.
+#[must_use]
+pub fn data_dir() -> std::path::PathBuf {
+    DATA_DIR.get().cloned().unwrap_or_else(|| {
+        env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(DATA_FOLDER)
+    })
+}
+
 pub mod op;
 
 pub mod advancement_data;
@@ -44,11 +64,10 @@ pub trait LoadJSONConfiguration {
     where
         Self: Sized + Default + Serialize + for<'de> Deserialize<'de>,
     {
-        let exe_dir = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let data_dir = exe_dir.join(DATA_FOLDER);
+        let data_dir = data_dir();
         if !data_dir.exists() {
             debug!("creating new data root folder");
-            let _ = fs::create_dir(&data_dir);
+            let _ = fs::create_dir_all(&data_dir);
         }
         let path = data_dir.join(Self::get_path());
 
@@ -98,11 +117,10 @@ pub trait SaveJSONConfiguration: LoadJSONConfiguration {
     where
         Self: Sized + Default + Serialize + for<'de> Deserialize<'de>,
     {
-        let exe_dir = env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let data_dir = exe_dir.join(DATA_FOLDER);
+        let data_dir = data_dir();
         if !data_dir.exists() {
             debug!("creating new data root folder");
-            let _ = fs::create_dir(&data_dir);
+            let _ = fs::create_dir_all(&data_dir);
         }
         let path = data_dir.join(Self::get_path());
 
