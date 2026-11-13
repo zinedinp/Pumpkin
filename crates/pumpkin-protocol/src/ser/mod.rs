@@ -69,25 +69,25 @@ impl serde::ser::Error for WritingError {
 
 struct NetworkReadDataSource<'a, R: NetworkReadExt + ?Sized>(&'a mut R);
 
+fn nbt_from_reading(err: ReadingError) -> pumpkin_nbt::Error {
+    let kind = match err {
+        ReadingError::CleanEOF(_) | ReadingError::Incomplete(_) => {
+            std::io::ErrorKind::UnexpectedEof
+        }
+        _ => std::io::ErrorKind::InvalidData,
+    };
+    pumpkin_nbt::Error::Incomplete(std::io::Error::new(kind, err.to_string()))
+}
+
 impl<'a, R: NetworkReadExt + ?Sized> pumpkin_nbt::deserializer::NbtDataSource<'a>
     for NetworkReadDataSource<'a, R>
 {
     fn read_u8(&mut self) -> Result<u8, pumpkin_nbt::Error> {
-        self.0.get_u8().map_err(|e| {
-            pumpkin_nbt::Error::Incomplete(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                e.to_string(),
-            ))
-        })
+        self.0.get_u8().map_err(nbt_from_reading)
     }
 
     fn read_bytes(&mut self, buf: &mut [u8]) -> Result<(), pumpkin_nbt::Error> {
-        self.0.read_bytes_to_buf(buf).map_err(|e| {
-            pumpkin_nbt::Error::Incomplete(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                e.to_string(),
-            ))
-        })
+        self.0.read_bytes_to_buf(buf).map_err(nbt_from_reading)
     }
 
     fn seek_relative(&mut self, offset: i64) -> Result<(), pumpkin_nbt::Error> {
@@ -98,34 +98,21 @@ impl<'a, R: NetworkReadExt + ?Sized> pumpkin_nbt::deserializer::NbtDataSource<'a
             )));
         }
         let mut skipped = vec![0u8; offset as usize];
-        self.0.read_bytes_to_buf(&mut skipped).map_err(|e| {
-            pumpkin_nbt::Error::Incomplete(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                e.to_string(),
-            ))
-        })
+        self.0
+            .read_bytes_to_buf(&mut skipped)
+            .map_err(nbt_from_reading)
     }
 
     fn read_string(&mut self, len: usize) -> Result<Cow<'a, str>, pumpkin_nbt::Error> {
         let mut buf = vec![0u8; len];
-        self.0.read_bytes_to_buf(&mut buf).map_err(|e| {
-            pumpkin_nbt::Error::Incomplete(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                e.to_string(),
-            ))
-        })?;
+        self.0.read_bytes_to_buf(&mut buf).map_err(nbt_from_reading)?;
         let string = pumpkin_nbt::cesu8::from_java_cesu8(&buf)?;
         Ok(Cow::Owned(string.into_owned()))
     }
 
     fn read_byte_array(&mut self, len: usize) -> Result<Cow<'a, [i8]>, pumpkin_nbt::Error> {
         let mut buf = vec![0u8; len];
-        self.0.read_bytes_to_buf(&mut buf).map_err(|e| {
-            pumpkin_nbt::Error::Incomplete(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                e.to_string(),
-            ))
-        })?;
+        self.0.read_bytes_to_buf(&mut buf).map_err(nbt_from_reading)?;
         let i8_buf: Vec<i8> = buf.into_iter().map(|b| b as i8).collect();
         Ok(Cow::Owned(i8_buf))
     }

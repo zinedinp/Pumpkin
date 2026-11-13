@@ -9,7 +9,6 @@ use crate::serializer::NbtWriteHelper;
 use crate::tag::NbtTag;
 use crate::{END_ID, Error, Nbt};
 use std::collections::hash_map::IntoIter;
-use std::io::ErrorKind;
 
 #[macro_export]
 /// Creates an [`NbtTag::Compound`](crate::tag::NbtTag::Compound) from key-value pairs.
@@ -64,12 +63,7 @@ impl NbtCompound {
         }
 
         loop {
-            let tag_id = match reader.get_u8() {
-                Ok(id) => id,
-                Err(Error::Incomplete(e)) if e.kind() == ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e),
-            };
-
+            let tag_id = reader.get_u8()?;
             if tag_id == END_ID {
                 break;
             }
@@ -100,12 +94,7 @@ impl NbtCompound {
         let mut compound = Self::new();
 
         loop {
-            let tag_id = match reader.get_u8() {
-                Ok(id) => id,
-                Err(Error::Incomplete(e)) if e.kind() == ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(e),
-            };
-
+            let tag_id = reader.get_u8()?;
             if tag_id == END_ID {
                 break;
             }
@@ -471,5 +460,22 @@ mod tests {
         let mut short = NbtCompound::new();
         short.put("UUID", crate::tag::NbtTag::IntArray(vec![1, 2, 3]));
         assert_eq!(short.get_uuid("UUID"), None);
+    }
+
+    #[test]
+    fn a_truncated_compound_is_an_error() {
+        use crate::deserializer::NbtReadHelperJava;
+        use std::io::Cursor;
+
+        let mut cursor = Cursor::new(&[] as &[u8]);
+        let mut helper = NbtReadHelperJava::new(&mut cursor);
+        assert!(
+            NbtCompound::deserialize_content(&mut helper).is_err(),
+            "vanilla NbtIo fails when TAG_End is missing"
+        );
+
+        let mut cursor = Cursor::new([0u8]);
+        let mut helper = NbtReadHelperJava::new(&mut cursor);
+        assert!(NbtCompound::deserialize_content(&mut helper).is_ok());
     }
 }

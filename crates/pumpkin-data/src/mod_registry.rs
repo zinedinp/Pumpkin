@@ -282,6 +282,8 @@ pub fn register_simple_block(
         slipperiness: 0.6,
         velocity_multiplier: 1.0,
         jump_velocity_multiplier: 1.0,
+        bounce_restitution: 0.0,
+        fall_distance_reduction: 0.0,
         item_id,
         default_state: state,
         states,
