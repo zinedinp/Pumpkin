@@ -379,9 +379,10 @@ impl DataComponentCodec<Self> for LoreImpl {
         }
 
         let mut lines = Vec::with_capacity(count as usize);
-        for _ in 0..count {
-            let tag =
-                seq.get_nbt_with_version(&pumpkin_util::version::JavaMinecraftVersion::V_26_2)?;
+        for i in 0..count {
+            let tag = seq
+                .get_nbt_with_version(&pumpkin_util::version::JavaMinecraftVersion::V_26_2)
+                .map_err(|e| ReadingError::Message(format!("lore line {i}: {e}")))?;
             let text = tag.as_ref().map_or_else(
                 pumpkin_util::text::TextComponent::empty,
                 pumpkin_util::text::TextComponent::from_nbt,

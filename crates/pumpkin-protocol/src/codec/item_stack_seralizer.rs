@@ -289,9 +289,12 @@ impl ItemStackSerializer<'_> {
             let id = read_component_type(read)?;
 
             let component_impl = if id == DataComponent::CustomData {
-                CustomDataImpl::deserialize(read)?.to_dyn()
+                CustomDataImpl::deserialize(read)
+                    .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
+                    .to_dyn()
             } else {
-                deserialize(id, read)?
+                deserialize(id, read)
+                    .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
             };
             patch.push((id, Some(component_impl)));
         }
@@ -442,9 +445,12 @@ impl ItemStackSerializer<'_> {
             let id = read_component_type(read)?;
 
             let component_impl = if id == DataComponent::CustomData {
-                CustomDataImpl::deserialize(read)?.to_dyn()
+                CustomDataImpl::deserialize(read)
+                    .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
+                    .to_dyn()
             } else {
-                deserialize(id, read)?
+                deserialize(id, read)
+                    .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
             };
             patch.push((id, Some(component_impl)));
         }
@@ -948,6 +954,104 @@ mod tests {
             .get_data_component::<pumpkin_data::data_component_impl::ItemModelImpl>()
             .expect("item model");
         assert_eq!(&*model.id, "nexo:plushie");
+    }
+
+    /// empty first line, then a line whose `extra`
+    /// is a list of one compound (price), with every style flag written as
+    /// a byte. Vanilla `ItemLore.STREAM_CODEC` is a varint count then NBT.
+    #[test]
+    fn lore_with_nested_extra_then_custom_data_keeps_the_slot() {
+        use pumpkin_nbt::compound::NbtCompound;
+        use pumpkin_nbt::tag::NbtTag;
+
+        fn string_field(name: &str, value: &str) -> Vec<u8> {
+            let mut out = vec![0x08];
+            out.extend((name.len() as u16).to_be_bytes());
+            out.extend(name.as_bytes());
+            out.extend((value.len() as u16).to_be_bytes());
+            out.extend(value.as_bytes());
+            out
+        }
+        fn byte_field(name: &str, value: u8) -> Vec<u8> {
+            let mut out = vec![0x01];
+            out.extend((name.len() as u16).to_be_bytes());
+            out.extend(name.as_bytes());
+            out.push(value);
+            out
+        }
+        let mut extra_child = Vec::new();
+        extra_child.extend(string_field("text", "$100.000"));
+        extra_child.extend(string_field("color", "green"));
+        extra_child.extend(byte_field("italic", 0));
+        extra_child.push(0x00);
+        let mut price = Vec::new();
+        price.push(0x0A);
+        price.extend(string_field("text", "Priis: "));
+        price.extend(string_field("color", "white"));
+        price.extend(byte_field("obfuscated", 0));
+        price.extend(byte_field("bold", 0));
+        price.extend(byte_field("strikethrough", 0));
+        price.extend(byte_field("underlined", 0));
+        price.extend(byte_field("italic", 0));
+        price.push(0x09);
+        price.extend((5u16).to_be_bytes());
+        price.extend(b"extra");
+        price.push(0x0A);
+        price.extend(1u32.to_be_bytes());
+        price.extend(extra_child);
+        price.push(0x00);
+        let mut empty = vec![0x0A];
+        empty.extend(string_field("text", ""));
+        empty.extend(byte_field("italic", 0));
+        empty.push(0x00);
+        let mut seller = Vec::new();
+        seller.push(0x0A);
+        seller.extend(string_field("text", "Verk\u{00e4}ufer: .Jaydi2"));
+        seller.extend(string_field("color", "white"));
+        seller.push(0x00);
+        let mut expiry = Vec::new();
+        expiry.push(0x0A);
+        expiry.extend(string_field("text", "Lauft ab i: "));
+        expiry.extend(string_field("color", "white"));
+        expiry.push(0x00);
+
+        let mut body = Vec::new();
+        body.write_var_int(&VarInt(1)).unwrap();
+        body.write_var_int(&VarInt(1)).unwrap();
+        body.write_var_int(&VarInt(3)).unwrap();
+        body.write_var_int(&VarInt(0)).unwrap();
+        body.write_var_int(&VarInt(11)).unwrap();
+        body.write_var_int(&VarInt(4)).unwrap();
+        body.extend(empty);
+        body.extend(price);
+        body.extend(seller);
+        body.extend(expiry);
+        body.write_var_int(&VarInt(6)).unwrap();
+        let mut name = pumpkin_nbt::compound::NbtCompound::new();
+        name.put_string("text", "Auction".to_string());
+        let mut name_bytes = Vec::new();
+        NbtTag::Compound(name)
+            .serialize(&mut pumpkin_nbt::serializer::NbtWriteHelperJava::new(
+                &mut name_bytes,
+            ))
+            .unwrap();
+        body.extend(name_bytes);
+        body.write_var_int(&VarInt(0)).unwrap();
+        let mut custom = NbtCompound::new();
+        custom.put_string("minecraft:secured", "auction".to_string());
+        CustomDataImpl { data: custom }
+            .serialize(&mut body)
+            .unwrap();
+
+        let stack = ItemStackSerializer::read(&mut body.as_slice())
+            .expect("nested lore extra must not desync later components")
+            .to_stack();
+        let lore = stack
+            .get_data_component::<pumpkin_data::data_component_impl::LoreImpl>()
+            .expect("lore");
+        assert_eq!(lore.lines.len(), 4);
+        assert!(stack.get_data_component::<CustomDataImpl>().is_some());
+        assert!(stack.get_data_component::<CustomNameImpl>().is_some());
     }
 
     #[test]
