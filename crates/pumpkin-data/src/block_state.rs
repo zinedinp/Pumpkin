@@ -206,8 +206,8 @@ impl BlockState {
     }
 
     #[must_use]
-    pub fn is_waterlogged(&self) -> bool {
-        self.id.is_waterlogged()
+    pub const fn is_waterlogged(&self) -> bool {
+        self.state_flags & IS_WATERLOGGED != 0
     }
 
     /// Produce a new state identical to `self` except the waterlogged property
@@ -319,69 +319,62 @@ impl BlockStateId {
 
     #[inline]
     #[must_use]
-    pub fn to_state(self) -> &'static BlockState {
+    pub const fn to_state(self) -> &'static BlockState {
         BlockState::from_id(self)
     }
 
     #[inline]
     #[must_use]
-    pub fn to_block_id(self) -> BlockId {
+    pub const fn to_block_id(self) -> BlockId {
         BlockId::from_state_id(self)
     }
 
-    /// Generated vanilla table only. Extra zip-mod states map to air.
     #[inline]
     #[must_use]
-    pub const fn to_vanilla_block_id(self) -> BlockId {
-        BlockId::from_vanilla_state_id(self)
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn to_block(self) -> &'static Block {
+    pub const fn to_block(self) -> &'static Block {
         Block::from_state_id(self)
     }
 
     #[inline]
     #[must_use]
     pub const fn is_solid_render(self) -> bool {
-        BlockState::from_vanilla_id(self).is_solid_render()
+        self.to_state().is_solid_render()
     }
 
     #[inline]
     #[must_use]
     pub const fn can_occlude(self) -> bool {
-        BlockState::from_vanilla_id(self).can_occlude()
+        self.to_state().can_occlude()
     }
 
     #[inline]
     #[must_use]
     pub const fn has_analog_output_signal(self) -> bool {
-        BlockState::from_vanilla_id(self).has_analog_output_signal()
+        self.to_state().has_analog_output_signal()
     }
 
     #[inline]
     #[must_use]
     pub const fn is_air(self) -> bool {
-        BlockState::from_vanilla_id(self).is_air()
+        self.to_state().is_air()
     }
 
     #[inline]
     #[must_use]
-    pub fn is_waterlogged(self) -> bool {
-        self.to_block().is_waterlogged(self)
+    pub const fn is_waterlogged(self) -> bool {
+        self.to_state().is_waterlogged()
     }
 
     #[inline]
     #[must_use]
     pub const fn is_side_solid(self, side: BlockDirection) -> bool {
-        BlockState::from_vanilla_id(self).is_side_solid(side)
+        self.to_state().is_side_solid(side)
     }
 
     #[inline]
     #[must_use]
     pub const fn is_center_solid(self, side: BlockDirection) -> bool {
-        BlockState::from_vanilla_id(self).is_center_solid(side)
+        self.to_state().is_center_solid(side)
     }
 
     #[inline]
@@ -430,6 +423,8 @@ const HAS_RANDOM_TICKS: u16 = 1 << 9;
 const IS_SOLID_RENDER: u16 = 1 << 10;
 const CAN_OCCLUDE: u16 = 1 << 11;
 const HAS_ANALOG_OUTPUT_SIGNAL: u16 = 1 << 12;
+// codegen flag
+const IS_WATERLOGGED: u16 = 1 << 13;
 
 // side_flags
 const DOWN_SIDE_SOLID: u8 = 1 << 0;
@@ -443,11 +438,43 @@ const UP_CENTER_SOLID: u8 = 1 << 7;
 
 #[cfg(test)]
 mod tests {
-    use crate::Block;
+    use super::{BlockState, BlockStateId};
+    use crate::{Block, BlockId};
     use pumpkin_util::math::position::BlockPos;
 
     fn assert_close(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1.0e-6, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn waterlogged_flag_matches_properties() {
+        for raw in 0..BlockStateId::STATE_COUNT {
+            let id = BlockStateId::new(raw).unwrap();
+            let by_props = Block::from_state_id(id)
+                .properties(id)
+                .is_some_and(|props| {
+                    props
+                        .to_props()
+                        .contains(&crate::Property::Waterlogged(true))
+                });
+            assert_eq!(id.is_waterlogged(), by_props, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn block_lookups_share_one_copy() {
+        let stone = Block::from_id(BlockId::STONE);
+        assert!(std::ptr::eq(
+            stone,
+            Block::from_name("minecraft:stone").unwrap()
+        ));
+        assert!(std::ptr::eq(
+            stone,
+            Block::from_item_id(stone.item_id).unwrap()
+        ));
+        let state = BlockState::from_id(stone.default_state.id);
+        assert!(std::ptr::eq(state, stone.default_state));
+        assert!(std::ptr::eq(state, &stone.states[0]));
     }
 
     #[test]

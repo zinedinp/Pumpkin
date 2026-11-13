@@ -29,9 +29,7 @@ fn read_count(seq: &mut impl NetworkReadExt, max_size: usize) -> Result<usize, R
         })
 }
 
-pub fn read_component_type(
-    seq: &mut impl NetworkReadExt,
-) -> Result<DataComponent, ReadingError> {
+pub fn read_component_type(seq: &mut impl NetworkReadExt) -> Result<DataComponent, ReadingError> {
     let id_val = seq.get_var_int()?.0;
     u8::try_from(id_val)
         .ok()
@@ -304,9 +302,18 @@ impl DataComponentCodec<Self> for EnchantmentsImpl {
         for _ in 0..len {
             let id = seq.get_var_int()?.0;
             let level = seq.get_var_int()?.0;
-            if let Some(enchantment) = u8::try_from(id).ok().and_then(Enchantment::from_id) {
-                enc.push((enchantment, level));
+            // `ItemEnchantments` constructor bound; 0 passes on the wire.
+            if !(0..=MAX_ENCHANTMENT_LEVEL).contains(&level) {
+                return Err(ReadingError::Message(format!(
+                    "Enchantment level {level} out of range"
+                )));
             }
+            enc.push((
+                u8::try_from(id).ok().and_then(Enchantment::from_id).ok_or(
+                    ReadingError::Message("EnchantmentsImpl Enchantment VarInt Incorrect!".into()),
+                )?,
+                level,
+            ));
         }
         Ok(Self {
             enchantment: Cow::from(enc),
@@ -904,9 +911,20 @@ impl DataComponentCodec<Self> for StoredEnchantmentsImpl {
         for _ in 0..len {
             let id = seq.get_var_int()?.0;
             let level = seq.get_var_int()?.0;
-            if let Some(enchantment) = u8::try_from(id).ok().and_then(Enchantment::from_id) {
-                stored_enchantments.push((enchantment, level));
+            // `ItemEnchantments` constructor bound; 0 passes on the wire.
+            if !(0..=MAX_ENCHANTMENT_LEVEL).contains(&level) {
+                return Err(ReadingError::Message(format!(
+                    "Enchantment level {level} out of range"
+                )));
             }
+            stored_enchantments.push((
+                u8::try_from(id).ok().and_then(Enchantment::from_id).ok_or(
+                    ReadingError::Message(
+                        "StoredEnchantmentsImpl Enchantment VarInt Incorrect!".into(),
+                    ),
+                )?,
+                level,
+            ));
         }
         Ok(Self {
             enchantment: Cow::from(stored_enchantments),
@@ -3616,13 +3634,66 @@ mod tests {
             let mut encoded = Vec::new();
             encoded.write_var_int(&VarInt(material)).unwrap();
             encoded.write_var_int(&VarInt(1)).unwrap();
-            let trim = TrimImpl::deserialize(&mut encoded.as_slice())
-                .unwrap_or_else(|e| panic!("unknown trim material {material} must keep the slot: {e}"));
+            let trim = TrimImpl::deserialize(&mut encoded.as_slice()).unwrap_or_else(|e| {
+                panic!("unknown trim material {material} must keep the slot: {e}")
+            });
             assert_eq!(trim.material_enum(), Some(TrimMaterial::all()[0]));
         }
         let mut inline = Vec::new();
         inline.write_var_int(&VarInt(0)).unwrap();
         inline.write_var_int(&VarInt(1)).unwrap();
         assert!(TrimImpl::deserialize(&mut inline.as_slice()).is_err());
+    }
+
+    fn enchantment_wire_bytes(id: i32, level: i32) -> Vec<u8> {
+        let mut encoded = Vec::new();
+        encoded.write_var_int(&VarInt(1)).unwrap();
+        encoded.write_var_int(&VarInt(id)).unwrap();
+        encoded.write_var_int(&VarInt(level)).unwrap();
+        encoded
+    }
+
+    #[test]
+    fn enchantment_levels_outside_the_vanilla_range_are_rejected() {
+        for level in [0, 1, 255] {
+            assert!(
+                EnchantmentsImpl::deserialize(
+                    &mut enchantment_wire_bytes(i32::from(Enchantment::RIPTIDE.id), level)
+                        .as_slice()
+                )
+                .is_ok(),
+                "level {level} was rejected"
+            );
+        }
+        for level in [-1, 256, 2000] {
+            assert!(
+                EnchantmentsImpl::deserialize(
+                    &mut enchantment_wire_bytes(i32::from(Enchantment::RIPTIDE.id), level)
+                        .as_slice()
+                )
+                .is_err(),
+                "level {level} was accepted"
+            );
+        }
+        assert!(
+            StoredEnchantmentsImpl::deserialize(
+                &mut enchantment_wire_bytes(i32::from(Enchantment::MENDING.id), 2000).as_slice()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unknown_enchantment_ids_do_not_wrap() {
+        // `holderRegistry` rejects ids past the registry instead of wrapping.
+        let wrapped = 256 + i32::from(Enchantment::RIPTIDE.id);
+        assert!(
+            EnchantmentsImpl::deserialize(&mut enchantment_wire_bytes(wrapped, 1).as_slice())
+                .is_err()
+        );
+        assert!(
+            StoredEnchantmentsImpl::deserialize(&mut enchantment_wire_bytes(wrapped, 1).as_slice())
+                .is_err()
+        );
     }
 }
