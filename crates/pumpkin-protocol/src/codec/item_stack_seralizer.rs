@@ -1,5 +1,7 @@
 use crate::VarInt;
-use crate::codec::data_component::{DataComponentCodec, deserialize, serialize};
+use crate::codec::data_component::{
+    DataComponentCodec, deserialize, read_component_type, serialize,
+};
 use crate::ser::{NetworkReadExt, NetworkWriteExt, ReadingError, WritingError};
 use pumpkin_data::data_component::DataComponent;
 use pumpkin_data::data_component_impl::{
@@ -284,9 +286,7 @@ impl ItemStackSerializer<'_> {
         let mut patch = Vec::with_capacity((num_to_add + num_to_remove) as usize);
 
         for _ in 0..num_to_add {
-            let id_val = read.get_var_int()?.0;
-            let id = DataComponent::try_from_id(id_val as u8)
-                .ok_or_else(|| ReadingError::Message(format!("Unknown component ID: {id_val}")))?;
+            let id = read_component_type(read)?;
 
             let component_impl = if id == DataComponent::CustomData {
                 CustomDataImpl::deserialize(read)?.to_dyn()
@@ -297,9 +297,7 @@ impl ItemStackSerializer<'_> {
         }
 
         for _ in 0..num_to_remove {
-            let id_val = read.get_var_int()?.0;
-            let id = DataComponent::try_from_id(id_val as u8)
-                .ok_or_else(|| ReadingError::Message("Unknown component ID".into()))?;
+            let id = read_component_type(read)?;
             patch.push((id, None));
         }
 
@@ -441,9 +439,7 @@ impl ItemStackSerializer<'_> {
         let mut patch = Vec::with_capacity(total_components as usize);
 
         for _ in 0..num_to_add {
-            let id_val = read.get_var_int()?.0;
-            let id = DataComponent::try_from_id(id_val as u8)
-                .ok_or_else(|| ReadingError::Message(format!("Unknown component ID: {id_val}")))?;
+            let id = read_component_type(read)?;
 
             let component_impl = if id == DataComponent::CustomData {
                 CustomDataImpl::deserialize(read)?.to_dyn()
@@ -454,9 +450,7 @@ impl ItemStackSerializer<'_> {
         }
 
         for _ in 0..num_to_remove {
-            let id_val = read.get_var_int()?.0;
-            let id = DataComponent::try_from_id(id_val as u8)
-                .ok_or_else(|| ReadingError::Message("Unknown component ID".into()))?;
+            let id = read_component_type(read)?;
             patch.push((id, None));
         }
 
@@ -922,5 +916,50 @@ mod tests {
         let trim = [1u8, 1, 1, 0, 58, 110, 110];
         ItemStackSerializer::read(&mut trim.as_slice())
             .expect("unknown trim holders must keep the stack");
+    }
+
+    #[test]
+    fn custom_data_then_item_model_keeps_the_slot() {
+        use pumpkin_nbt::compound::NbtCompound;
+        use pumpkin_nbt::tag::NbtTag;
+
+        let mut bukkit = NbtCompound::new();
+        bukkit.put_string("cb_stattracker:amount-jumped@", "5.076".to_string());
+        let mut custom = NbtCompound::new();
+        custom.put("PublicBukkitValues", NbtTag::Compound(bukkit));
+
+        let mut body = Vec::new();
+        body.write_var_int(&VarInt(1)).unwrap();
+        body.write_var_int(&VarInt(1)).unwrap();
+        body.write_var_int(&VarInt(2)).unwrap();
+        body.write_var_int(&VarInt(0)).unwrap();
+        body.write_var_int(&VarInt(0)).unwrap();
+        CustomDataImpl { data: custom }
+            .serialize(&mut body)
+            .unwrap();
+        body.write_var_int(&VarInt(10)).unwrap();
+        body.write_string("nexo:plushie").unwrap();
+
+        let stack = ItemStackSerializer::read(&mut body.as_slice())
+            .expect("nested custom_data must not desync item_model")
+            .to_stack();
+        assert!(stack.get_data_component::<CustomDataImpl>().is_some());
+        let model = stack
+            .get_data_component::<pumpkin_data::data_component_impl::ItemModelImpl>()
+            .expect("item model");
+        assert_eq!(&*model.id, "nexo:plushie");
+    }
+
+    #[test]
+    fn truncated_custom_data_fails_instead_of_eating_the_next_component() {
+        // count=1, item=1, add=2, remove=0, CustomData, TAG_Compound without
+        // TAG_End, then what would be ItemModel if the compound ended early.
+        let mut body = vec![1u8, 1, 2, 0, 0, 0x0A];
+        body.write_var_int(&VarInt(10)).unwrap();
+        body.write_string("nexo:plushie").unwrap();
+        assert!(
+            ItemStackSerializer::read(&mut body.as_slice()).is_err(),
+            "a compound without TAG_End must fail instead of reading leftover as ItemModel",
+        );
     }
 }

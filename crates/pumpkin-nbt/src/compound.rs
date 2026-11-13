@@ -467,15 +467,13 @@ mod tests {
         use crate::deserializer::NbtReadHelperJava;
         use std::io::Cursor;
 
-        let mut cursor = Cursor::new(&[] as &[u8]);
-        let mut helper = NbtReadHelperJava::new(&mut cursor);
+        let mut helper = NbtReadHelperJava::new(Cursor::new(&[] as &[u8]));
         assert!(
             NbtCompound::deserialize_content(&mut helper).is_err(),
             "vanilla NbtIo fails when TAG_End is missing"
         );
 
-        let mut cursor = Cursor::new([0u8]);
-        let mut helper = NbtReadHelperJava::new(&mut cursor);
+        let mut helper = NbtReadHelperJava::new(Cursor::new(&[0u8][..]));
         assert!(NbtCompound::deserialize_content(&mut helper).is_ok());
     }
 }

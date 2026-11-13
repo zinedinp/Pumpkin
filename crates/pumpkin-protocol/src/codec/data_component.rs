@@ -29,6 +29,16 @@ fn read_count(seq: &mut impl NetworkReadExt, max_size: usize) -> Result<usize, R
         })
 }
 
+pub fn read_component_type(
+    seq: &mut impl NetworkReadExt,
+) -> Result<DataComponent, ReadingError> {
+    let id_val = seq.get_var_int()?.0;
+    u8::try_from(id_val)
+        .ok()
+        .and_then(DataComponent::try_from_id)
+        .ok_or_else(|| ReadingError::Message(format!("Unknown component ID: {id_val}")))
+}
+
 #[must_use]
 pub fn data_to_proto_sound(id_or: &IdOr<SoundEvent>) -> crate::IdOr<crate::SoundEvent> {
     match id_or {
@@ -1326,9 +1336,7 @@ fn deserialize_item_stack_template(
     let mut patch = Vec::with_capacity((num_to_add + num_to_remove) as usize);
 
     for _ in 0..num_to_add {
-        let id_val = seq.get_var_int()?.0;
-        let id = DataComponent::try_from_id(id_val as u8)
-            .ok_or_else(|| ReadingError::Message(format!("Unknown component ID: {id_val}")))?;
+        let id = read_component_type(seq)?;
 
         let _byte_len = seq.get_var_int()?;
 
@@ -1337,9 +1345,7 @@ fn deserialize_item_stack_template(
     }
 
     for _ in 0..num_to_remove {
-        let id_val = seq.get_var_int()?.0;
-        let id = DataComponent::try_from_id(id_val as u8)
-            .ok_or_else(|| ReadingError::Message("Unknown component ID".into()))?;
+        let id = read_component_type(seq)?;
         patch.push((id, None));
     }
 
@@ -1715,14 +1721,16 @@ fn deserialize_adventure_predicate(seq: &mut impl NetworkReadExt) -> Result<NbtT
         }
         let exact_len = seq.get_var_int()?.0;
         for _ in 0..exact_len {
-            let comp_id = seq.get_var_int()?.0 as u8;
-            if let Some(comp) = DataComponent::try_from_id(comp_id) {
-                let _ = deserialize(comp, seq)?;
-            }
+            let comp = read_component_type(seq)?;
+            let _ = deserialize(comp, seq)?;
         }
         let partial_len = seq.get_var_int()?.0;
         for _ in 0..partial_len {
-            let _ = seq.get_var_int()?;
+            // `DataComponentPredicate.Type.STREAM_CODEC`: Either of two
+            // registries, then `fromCodecWithRegistries` for the value.
+            let _is_predicate_type = seq.get_bool()?;
+            let _type_id = seq.get_var_int()?;
+            let _ = seq.get_nbt_with_version(&JavaMinecraftVersion::V_26_2)?;
         }
         preds.push(NbtTag::Compound(comp));
     }
