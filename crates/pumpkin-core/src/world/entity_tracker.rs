@@ -982,6 +982,17 @@ impl TrackedEntity {
         }
     }
 
+    /// The players that see this entity.
+    #[must_use]
+    pub fn watchers(&self) -> Vec<Arc<Player>> {
+        self.seen_by
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub fn send_to_tracking_players<P: ClientPacket + Sync>(&self, packet: &P, _world: &World) {
         let seen_by = self
             .seen_by

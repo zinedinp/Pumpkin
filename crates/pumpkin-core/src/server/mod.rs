@@ -141,6 +141,8 @@ pub struct Server {
     pub aggregated_tick_times_nanos: AtomicI64,
     /// Total number of ticks processed by the server
     pub tick_count: AtomicI32,
+    /// The checks every client move passes; vanilla's by default.
+    pub move_checks: ArcSwap<Vec<Arc<dyn crate::entity::player::move_check::MoveCheck>>>,
     /// Owns the server-wide tick profiling session used by `/debug`.
     pub(crate) debug_profiler: debug_profiler::DebugProfiler,
     /// Random unique Server ID used by Bedrock Edition
@@ -361,6 +363,7 @@ impl Server {
             tick_times_nanos: std::sync::Mutex::new([0; 100]),
             aggregated_tick_times_nanos: AtomicI64::new(0),
             tick_count: AtomicI32::new(0),
+            move_checks: ArcSwap::from_pointee(crate::entity::player::move_check::vanilla_checks()),
             debug_profiler: debug_profiler::DebugProfiler::new(),
             tasks: TaskTracker::new(),
             stop_token: crate::STOP_INTERRUPT.child_token(),

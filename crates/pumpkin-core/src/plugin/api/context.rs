@@ -275,6 +275,46 @@ impl Context {
         }
     }
 
+    /// Allows a custom movement state (`melon:movement`), or replaces its
+    /// spec, and tells the players' clients.
+    pub fn register_movement(
+        &self,
+        spec: pumpkin_data::mod_movement::MovementSpec,
+    ) -> Result<(), pumpkin_data::mod_movement::MovementError> {
+        pumpkin_data::mod_movement::register_movement(spec)?;
+        crate::entity::player::custom_movement::broadcast_allowed(&self.server);
+        Ok(())
+    }
+
+    /// Stops allowing the custom movement state `id`.
+    pub fn unregister_movement(&self, id: &str) {
+        if pumpkin_data::mod_movement::unregister_movement(id) {
+            crate::entity::player::custom_movement::broadcast_allowed(&self.server);
+        }
+    }
+
+    /// Adds a check every client move must pass (after vanilla's).
+    pub fn register_move_check(
+        &self,
+        check: impl crate::entity::player::move_check::MoveCheck + 'static,
+    ) {
+        let check: Arc<dyn crate::entity::player::move_check::MoveCheck> = Arc::new(check);
+        self.server.move_checks.rcu(|checks| {
+            let mut checks = (**checks).clone();
+            checks.push(check.clone());
+            checks
+        });
+    }
+
+    /// Drops the move check named `name`, a vanilla one included.
+    pub fn remove_move_check(&self, name: &str) {
+        self.server.move_checks.rcu(|checks| {
+            let mut checks = (**checks).clone();
+            checks.retain(|c| c.name() != name);
+            checks
+        });
+    }
+
     /// Register a permission for this plugin
     pub fn register_permission(&self, permission: Permission) -> Result<(), String> {
         // Ensure the permission has the correct namespace

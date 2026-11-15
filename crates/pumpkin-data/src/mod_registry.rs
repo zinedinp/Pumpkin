@@ -333,16 +333,14 @@ struct BlockFile {
     spec: BlockSpec,
 }
 
-/// Read `data/<ns>/blocks/*.json` from an extracted zip-mod folder.
-pub fn load_extracted_dir(dir: &Path) {
-    let data = dir.join("data");
-    let Ok(namespaces) = std::fs::read_dir(&data) else {
-        return;
+/// The `*.json` of `data/<ns>/<kind>/` in every namespace, sorted.
+fn data_files(dir: &Path, kind: &str) -> Vec<std::path::PathBuf> {
+    let Ok(namespaces) = std::fs::read_dir(dir.join("data")) else {
+        return Vec::new();
     };
     let mut files = Vec::new();
     for ns in namespaces.flatten() {
-        let blocks = ns.path().join("blocks");
-        let Ok(entries) = std::fs::read_dir(&blocks) else {
+        let Ok(entries) = std::fs::read_dir(ns.path().join(kind)) else {
             continue;
         };
         for entry in entries.flatten() {
@@ -356,7 +354,13 @@ pub fn load_extracted_dir(dir: &Path) {
         }
     }
     files.sort();
-    for path in files {
+    files
+}
+
+/// Read `data/<ns>/blocks/*.json` and `data/<ns>/movements/*.json` from an
+/// extracted zip-mod folder.
+pub fn load_extracted_dir(dir: &Path) {
+    for path in data_files(dir, "blocks") {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -372,6 +376,9 @@ pub fn load_extracted_dir(dir: &Path) {
             }
         };
         let _ = register_block(&file.id, &file.spec);
+    }
+    for path in data_files(dir, "movements") {
+        crate::mod_movement::load_file(&path);
     }
 }
 

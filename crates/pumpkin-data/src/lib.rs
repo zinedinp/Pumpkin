@@ -486,6 +486,7 @@ pub use block_state::{BlockState, BlockStateId};
 pub use blocks::{Block, BlockId, SpawnFloorPredicate};
 
 #[cfg(all(feature = "block", feature = "item"))]
+pub mod mod_movement;
 pub mod mod_registry;
 
 #[cfg(feature = "material_rule")]

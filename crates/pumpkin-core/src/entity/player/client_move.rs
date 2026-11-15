@@ -23,6 +23,7 @@ use crate::server::Server;
 use crate::world::chunker;
 
 use super::Player;
+use super::move_check::{self, MoveAttempt, MoveVerdict};
 use super::statistics::StatisticCategory;
 
 /// One client move this tick, from Java `ServerboundMovePlayerPacket` or Bedrock `PlayerAuthInput`.
@@ -245,6 +246,26 @@ impl Player {
         {
             self.reject_client_move();
             return ClientMoveOutcome::Rejected;
+        }
+
+        let (first_good, packets) = self.move_check.count_packet();
+        if let Some(pos) = target
+            && pos != last_pos
+        {
+            let tick = server.tick_count.load(Ordering::Relaxed);
+            let attempt = MoveAttempt {
+                start: last_pos,
+                target: pos,
+                first_good,
+                packets,
+                fall_flying: entity.is_fall_flying(),
+                extra_speed: self.custom_movement.extra_speed(tick),
+                runs_normally: server.tick_rate_manager.runs_normally(),
+            };
+            if move_check::run(&server.move_checks.load(), self, &attempt) == MoveVerdict::Reject {
+                self.reject_client_move();
+                return ClientMoveOutcome::Rejected;
+            }
         }
 
         if let Some(pos) = target

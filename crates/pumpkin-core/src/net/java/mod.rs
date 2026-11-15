@@ -1199,10 +1199,13 @@ impl JavaClient {
                 );
                 server.plugin_manager.fire_blocking(server, &mut event);
 
-                if channel_str == "minecraft:register" {
+                if channel_str == pumpkin_protocol::java::melon_movement::CHANNEL {
+                    player.handle_movement_payload(server, payload.data);
+                } else if channel_str == "minecraft:register" {
                     if let Ok(channels_data) = std::str::from_utf8(payload.data) {
                         for ch in channels_data.split('\0') {
                             if !ch.is_empty() {
+                                player.register_channel(ch);
                                 let mut reg_event = crate::plugin::api::events::player::player_register_channel::PlayerRegisterChannelEvent::new(
                                     player.clone(),
                                     ch.to_string(),
@@ -1222,6 +1225,7 @@ impl JavaClient {
                 {
                     for ch in channels_data.split('\0') {
                         if !ch.is_empty() {
+                            player.unregister_channel(ch);
                             let mut unreg_event = crate::plugin::api::events::player::player_unregister_channel::PlayerUnregisterChannelEvent::new(
                                 player.clone(),
                                 ch.to_string(),

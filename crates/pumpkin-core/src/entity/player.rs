@@ -1,6 +1,8 @@
 pub mod advancement;
 pub mod client_move;
 pub mod client_push;
+pub mod custom_movement;
+pub mod move_check;
 mod shoulders;
 pub mod statistics;
 
@@ -666,6 +668,10 @@ pub struct Player {
     pub teleport_id_count: AtomicI32,
     /// The pending teleport information, including the teleport ID and target location.
     pub awaiting_teleport: Mutex<Option<(VarInt, Vector3<f64>)>>,
+    /// Registered channels and custom movement states (`melon:movement`).
+    pub custom_movement: custom_movement::CustomMovement,
+    /// The move checks' per-tick counters.
+    pub move_check: move_check::MoveCheckState,
     /// The coordinates of the chunk section the player is currently watching.
     pub watched_section: AtomicCell<Cylindrical>,
     /// The last time the player performed an action (for idle timeout).
@@ -971,6 +977,8 @@ impl Player {
             gameprofile,
             client,
             awaiting_teleport: Mutex::new(None),
+            custom_movement: custom_movement::CustomMovement::default(),
+            move_check: move_check::MoveCheckState::default(),
             breath_manager: BreathManager::default(),
             // TODO: Load this from previous instance
             hunger_manager: HungerManager::default(),
@@ -3186,6 +3194,7 @@ impl Player {
     /// Inbound packets go first, for all players, so every tick sees this tick's moves.
     #[expect(clippy::too_many_lines)]
     pub fn tick<'a>(&'a self, server: &'a Server) {
+        self.move_check.start_tick(self.get_entity().pos.load());
         if let ClientPlatform::Bedrock(client) = self.client.as_ref() {
             client.tick_network_latency(self);
         }
