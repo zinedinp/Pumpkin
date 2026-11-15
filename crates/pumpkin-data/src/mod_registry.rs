@@ -363,7 +363,11 @@ pub fn load_extracted_dir(dir: &Path) {
         let file = match serde_json::from_str::<BlockFile>(&text) {
             Ok(file) => file,
             Err(e) => {
-                eprintln!("mod block {} unreadable: {e}", path.display());
+                // pumpkin-data has no logger; a skipped mod block must still show.
+                #[allow(clippy::print_stderr)]
+                {
+                    eprintln!("mod block {} unreadable: {e}", path.display())
+                };
                 continue;
             }
         };
@@ -487,8 +491,8 @@ pub fn register_block(id: &str, spec: &BlockSpec) -> Result<&'static Block, Regi
         STATE_SLOTS.set(slot, state);
         BLOCK_SLOTS.set(slot, block);
         STATE_BLOCK_SLOTS.set(slot, block);
-        HINT_SLOTS.set(slot, hints);
-    }
+        HINT_SLOTS.set(slot, hints)
+    };
     guard.push(Entry {
         id: registry_key,
         block,

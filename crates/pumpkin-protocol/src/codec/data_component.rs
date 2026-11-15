@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::codec::registry_ids;
 use crate::codec::var_int::VarInt;
 use crate::ser::{NetworkReadExt, NetworkWriteExt, ReadingError, WritingError};
 use pumpkin_data::Enchantment;
@@ -282,11 +283,38 @@ impl DataComponentCodec<Self> for RepairCostImpl {
     }
 }
 
+/// An enchantment's id in the synced `minecraft:enchantment` registry.
+/// `Ok(None)` for an entry the server synced but Pumpkin has no data for
+/// (a datapack enchantment); an id no registry knows fails as in vanilla.
+// TODO(parity): keep datapack enchantments; `EnchantmentsImpl` only holds
+// `&'static Enchantment`, so they are skipped here.
+fn read_enchantment(id: i32) -> Result<Option<&'static Enchantment>, ReadingError> {
+    let name = registry_ids::name_of("minecraft:enchantment", id, |index| {
+        u8::try_from(index)
+            .ok()
+            .and_then(Enchantment::from_id)
+            .map(|e| e.name.to_owned())
+    })
+    .ok_or_else(|| ReadingError::Message(format!("Unknown enchantment id {id}")))?;
+    Ok(Enchantment::from_name(&name))
+}
+
+fn write_enchantment(
+    seq: &mut impl NetworkWriteExt,
+    enchantment: &Enchantment,
+) -> Result<(), WritingError> {
+    let id = registry_ids::id_of("minecraft:enchantment", enchantment.name, |_| {
+        Some(usize::from(enchantment.id))
+    })
+    .ok_or_else(|| WritingError::Message(format!("Unsynced enchantment {}", enchantment.name)))?;
+    seq.write_var_int(&VarInt(id))
+}
+
 impl DataComponentCodec<Self> for EnchantmentsImpl {
     fn serialize(&self, seq: &mut impl NetworkWriteExt) -> Result<(), WritingError> {
         seq.write_var_int(&VarInt::from(self.enchantment.len() as i32))?;
         for (enc, level) in self.enchantment.iter() {
-            seq.write_var_int(&VarInt::from(enc.id))?;
+            write_enchantment(seq, enc)?;
             seq.write_var_int(&VarInt::from(*level))?;
         }
         Ok(())
@@ -308,12 +336,9 @@ impl DataComponentCodec<Self> for EnchantmentsImpl {
                     "Enchantment level {level} out of range"
                 )));
             }
-            enc.push((
-                u8::try_from(id).ok().and_then(Enchantment::from_id).ok_or(
-                    ReadingError::Message("EnchantmentsImpl Enchantment VarInt Incorrect!".into()),
-                )?,
-                level,
-            ));
+            if let Some(enchantment) = read_enchantment(id)? {
+                enc.push((enchantment, level));
+            }
         }
         Ok(Self {
             enchantment: Cow::from(enc),
@@ -892,7 +917,7 @@ impl DataComponentCodec<Self> for StoredEnchantmentsImpl {
     fn serialize(&self, seq: &mut impl NetworkWriteExt) -> Result<(), WritingError> {
         seq.write_var_int(&VarInt::from(self.enchantment.len() as i32))?;
         for (enc, level) in self.enchantment.iter() {
-            seq.write_var_int(&VarInt::from(enc.id))?;
+            write_enchantment(seq, enc)?;
             seq.write_var_int(&VarInt::from(*level))?;
         }
         Ok(())
@@ -917,14 +942,9 @@ impl DataComponentCodec<Self> for StoredEnchantmentsImpl {
                     "Enchantment level {level} out of range"
                 )));
             }
-            stored_enchantments.push((
-                u8::try_from(id).ok().and_then(Enchantment::from_id).ok_or(
-                    ReadingError::Message(
-                        "StoredEnchantmentsImpl Enchantment VarInt Incorrect!".into(),
-                    ),
-                )?,
-                level,
-            ));
+            if let Some(enchantment) = read_enchantment(id)? {
+                stored_enchantments.push((enchantment, level));
+            }
         }
         Ok(Self {
             enchantment: Cow::from(stored_enchantments),
@@ -1445,64 +1465,91 @@ fn unknown_variant(component: &str, value: &str) -> WritingError {
 
 /// Vanilla `ByteBufCodecs.holderRegistry`: the entry's id in the synced registry.
 macro_rules! codec_registry_variant {
-    ($struct_name:ident, $variant:ty) => {
+    ($struct_name:ident, $variant:ty, $registry:literal) => {
+        // `ByteBufCodecs.holderRegistry`: the id in the synced registry.
         impl DataComponentCodec<Self> for $struct_name {
             fn serialize(&self, seq: &mut impl NetworkWriteExt) -> Result<(), WritingError> {
-                let variant = <$variant>::from_name(&self.value)
-                    .ok_or_else(|| unknown_variant(stringify!($struct_name), &self.value))?;
-                let id = i32::try_from(variant.id())
-                    .map_err(|_| unknown_variant(stringify!($struct_name), &self.value))?;
+                let id = registry_ids::id_of($registry, &self.value, |name| {
+                    <$variant>::from_name(name).map(|v| v.id() as usize)
+                })
+                .ok_or_else(|| unknown_variant(stringify!($struct_name), &self.value))?;
                 seq.write_var_int(&VarInt(id))
             }
             fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
                 let id = seq.get_var_int()?.0;
-                // Vanilla `holderRegistry` would fail the packet; a plugin
-                // patch with a leftover id (HugoSMP auction lore) must not
-                // drop the rest of the stack.
-                let variant = usize::try_from(id)
-                    .ok()
-                    .and_then(|id| <$variant>::all().get(id).copied())
-                    .unwrap_or_else(|| <$variant>::all()[0]);
+                let name = registry_ids::name_of($registry, id, |index| {
+                    <$variant>::all().get(index).map(|v| v.to_name().to_owned())
+                })
+                .ok_or_else(|| {
+                    ReadingError::Message(format!("unknown {} id {id}", stringify!($struct_name)))
+                })?;
                 Ok(Self {
-                    value: Cow::Owned(format!("minecraft:{}", variant.to_name())),
+                    value: Cow::Owned(name),
                 })
             }
         }
     };
 }
 
-codec_registry_variant!(WolfVariantImpl, pumpkin_data::wolf_variant::WolfVariant);
+codec_registry_variant!(
+    WolfVariantImpl,
+    pumpkin_data::wolf_variant::WolfVariant,
+    "minecraft:wolf_variant"
+);
 codec_registry_variant!(
     WolfSoundVariantImpl,
-    pumpkin_data::wolf_sound_variant::WolfSoundVariant
+    pumpkin_data::wolf_sound_variant::WolfSoundVariant,
+    "minecraft:wolf_sound_variant"
 );
-codec_registry_variant!(PigVariantImpl, pumpkin_data::pig_variant::PigVariant);
+codec_registry_variant!(
+    PigVariantImpl,
+    pumpkin_data::pig_variant::PigVariant,
+    "minecraft:pig_variant"
+);
 codec_registry_variant!(
     PigSoundVariantImpl,
-    pumpkin_data::pig_sound_variant::PigSoundVariant
+    pumpkin_data::pig_sound_variant::PigSoundVariant,
+    "minecraft:pig_sound_variant"
 );
-codec_registry_variant!(CowVariantImpl, pumpkin_data::cow_variant::CowVariant);
+codec_registry_variant!(
+    CowVariantImpl,
+    pumpkin_data::cow_variant::CowVariant,
+    "minecraft:cow_variant"
+);
 codec_registry_variant!(
     CowSoundVariantImpl,
-    pumpkin_data::cow_sound_variant::CowSoundVariant
+    pumpkin_data::cow_sound_variant::CowSoundVariant,
+    "minecraft:cow_sound_variant"
 );
 codec_registry_variant!(
     ChickenVariantImpl,
-    pumpkin_data::chicken_variant::ChickenVariant
+    pumpkin_data::chicken_variant::ChickenVariant,
+    "minecraft:chicken_variant"
 );
 codec_registry_variant!(
     ChickenSoundVariantImpl,
-    pumpkin_data::chicken_sound_variant::ChickenSoundVariant
+    pumpkin_data::chicken_sound_variant::ChickenSoundVariant,
+    "minecraft:chicken_sound_variant"
 );
 codec_registry_variant!(
     ZombieNautilusVariantImpl,
-    pumpkin_data::zombie_nautilus_variant::ZombieNautilusVariant
+    pumpkin_data::zombie_nautilus_variant::ZombieNautilusVariant,
+    "minecraft:zombie_nautilus_variant"
 );
-codec_registry_variant!(FrogVariantImpl, pumpkin_data::frog_variant::FrogVariant);
-codec_registry_variant!(CatVariantImpl, pumpkin_data::cat_variant::CatVariant);
+codec_registry_variant!(
+    FrogVariantImpl,
+    pumpkin_data::frog_variant::FrogVariant,
+    "minecraft:frog_variant"
+);
+codec_registry_variant!(
+    CatVariantImpl,
+    pumpkin_data::cat_variant::CatVariant,
+    "minecraft:cat_variant"
+);
 codec_registry_variant!(
     CatSoundVariantImpl,
-    pumpkin_data::cat_sound_variant::CatSoundVariant
+    pumpkin_data::cat_sound_variant::CatSoundVariant,
+    "minecraft:cat_sound_variant"
 );
 
 impl DataComponentCodec<Self> for VillagerVariantImpl {
@@ -1514,7 +1561,7 @@ impl DataComponentCodec<Self> for VillagerVariantImpl {
     fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
         let id = seq.get_var_int()?.0;
         let variant = pumpkin_data::villager::VillagerType::from_i32(id)
-            .unwrap_or(pumpkin_data::villager::VillagerType::Desert);
+            .ok_or_else(|| ReadingError::Message(format!("unknown VillagerVariantImpl id {id}")))?;
         Ok(Self {
             value: Cow::Owned(format!("minecraft:{}", variant.to_name())),
         })
@@ -1524,30 +1571,26 @@ impl DataComponentCodec<Self> for VillagerVariantImpl {
 /// Vanilla `ByteBufCodecs.holder`: 0 for an inline value, otherwise the registry id plus one.
 impl DataComponentCodec<Self> for PaintingVariantImpl {
     fn serialize(&self, seq: &mut impl NetworkWriteExt) -> Result<(), WritingError> {
-        let variant = pumpkin_data::painting_variant::PaintingVariant::from_name(&self.value)
-            .ok_or_else(|| unknown_variant("PaintingVariantImpl", &self.value))?;
-        let id = i32::try_from(variant.id())
-            .map_err(|_| unknown_variant("PaintingVariantImpl", &self.value))?;
+        let id = registry_ids::id_of("minecraft:painting_variant", &self.value, |name| {
+            pumpkin_data::painting_variant::PaintingVariant::from_name(name)
+                .map(|v| v.id() as usize)
+        })
+        .ok_or_else(|| unknown_variant("PaintingVariantImpl", &self.value))?;
         seq.write_var_int(&VarInt(id + 1))
     }
     fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
-        let id = seq.get_var_int()?.0;
-        // 0 is an inline holder (`ByteBufCodecs.holder`); we have no direct
-        // painting codec, so that still fails. Unknown registry ids default
-        // like `codec_registry_variant`.
-        if id == 0 {
-            return Err(ReadingError::Message(
-                "unsupported PaintingVariantImpl inline holder".into(),
-            ));
-        }
-        let variant = id
-            .checked_sub(1)
-            .and_then(|id| usize::try_from(id).ok())
-            .and_then(|id| pumpkin_data::painting_variant::PaintingVariant::all().get(id))
-            .copied()
-            .unwrap_or_else(|| pumpkin_data::painting_variant::PaintingVariant::all()[0]);
+        let name = read_holder_name(
+            seq,
+            "minecraft:painting_variant",
+            "painting variant",
+            |index| {
+                pumpkin_data::painting_variant::PaintingVariant::all()
+                    .get(index)
+                    .map(|v| v.to_name().to_owned())
+            },
+        )?;
         Ok(Self {
-            value: Cow::Owned(format!("minecraft:{}", variant.to_name())),
+            value: Cow::Owned(name),
         })
     }
 }
@@ -2520,11 +2563,14 @@ impl DataComponentCodec<Self> for WrittenBookContentImpl {
     }
 }
 
-fn read_holder_reference<T: Copy>(
+/// `ByteBufCodecs.holder` by reference: the synced registry id plus one
+/// (0 is an inline value, which Pumpkin can't decode yet).
+fn read_holder_name(
     seq: &mut impl NetworkReadExt,
-    entries: &[T],
+    registry: &str,
     kind: &str,
-) -> Result<T, ReadingError> {
+    vanilla: impl FnOnce(usize) -> Option<String>,
+) -> Result<String, ReadingError> {
     // Not IdOr::read: it truncates to u16, so out-of-range ids would alias valid entries.
     let id = seq.get_var_int()?.0;
     if id == 0 {
@@ -2532,30 +2578,54 @@ fn read_holder_reference<T: Copy>(
             "Inline {kind} is not supported"
         )));
     }
-    Ok(id
-        .checked_sub(1)
-        .and_then(|id| usize::try_from(id).ok())
-        .and_then(|id| entries.get(id).copied())
-        .unwrap_or(entries[0]))
+    id.checked_sub(1)
+        .and_then(|id| registry_ids::name_of(registry, id, vanilla))
+        .ok_or_else(|| ReadingError::Message(format!("Unknown {kind} reference {id}")))
+}
+
+fn write_holder_name(
+    seq: &mut impl NetworkWriteExt,
+    registry: &str,
+    name: Option<&str>,
+    kind: &str,
+    vanilla: impl FnOnce(&str) -> Option<usize>,
+) -> Result<(), WritingError> {
+    let id = name
+        .and_then(|name| registry_ids::id_of(registry, name, vanilla))
+        .ok_or_else(|| WritingError::Message(format!("Unknown {kind} {name:?}")))?;
+    seq.write_var_int(&VarInt(id + 1))
 }
 
 impl DataComponentCodec<Self> for TrimImpl {
-    // ArmorTrim.STREAM_CODEC: two ByteBufCodecs.holder values, written as registry id + 1.
+    // ArmorTrim.STREAM_CODEC: two ByteBufCodecs.holder values.
     fn serialize(&self, seq: &mut impl NetworkWriteExt) -> Result<(), WritingError> {
-        let material = self.material_enum().ok_or_else(|| {
-            WritingError::Message(format!("Unknown trim material {:?}", self.material))
-        })?;
-        let pattern = self.pattern_enum().ok_or_else(|| {
-            WritingError::Message(format!("Unknown trim pattern {:?}", self.pattern))
-        })?;
-        seq.write_var_int(&VarInt(material.id() as i32 + 1))?;
-        seq.write_var_int(&VarInt(pattern.id() as i32 + 1))
+        write_holder_name(
+            seq,
+            "minecraft:trim_material",
+            self.material.extract_string(),
+            "trim material",
+            |name| TrimMaterial::from_name(name).map(|m| m.id() as usize),
+        )?;
+        write_holder_name(
+            seq,
+            "minecraft:trim_pattern",
+            self.pattern.extract_string(),
+            "trim pattern",
+            |name| TrimPattern::from_name(name).map(|p| p.id() as usize),
+        )
     }
 
     fn deserialize(seq: &mut impl NetworkReadExt) -> Result<Self, ReadingError> {
-        let material = read_holder_reference(seq, TrimMaterial::all(), "trim material")?;
-        let pattern = read_holder_reference(seq, TrimPattern::all(), "trim pattern")?;
-        Ok(Self::new(material, pattern))
+        let material = read_holder_name(seq, "minecraft:trim_material", "trim material", |i| {
+            TrimMaterial::all().get(i).map(|m| m.asset_id().to_owned())
+        })?;
+        let pattern = read_holder_name(seq, "minecraft:trim_pattern", "trim pattern", |i| {
+            TrimPattern::all().get(i).map(|p| p.asset_id().to_owned())
+        })?;
+        Ok(Self {
+            material: NbtTag::String(material.into()),
+            pattern: NbtTag::String(pattern.into()),
+        })
     }
 }
 
@@ -3628,21 +3698,47 @@ mod tests {
     }
 
     #[test]
-    fn trim_unknown_registry_ids_keep_the_first_entry() {
+    fn trim_rejects_out_of_range_material_references() {
         let past_end = TrimMaterial::all().len() as i32 + 1;
-        for material in [past_end, 65537, -65535] {
+        for material in [0, past_end, 65537, -65535, i32::MIN] {
             let mut encoded = Vec::new();
             encoded.write_var_int(&VarInt(material)).unwrap();
             encoded.write_var_int(&VarInt(1)).unwrap();
-            let trim = TrimImpl::deserialize(&mut encoded.as_slice()).unwrap_or_else(|e| {
-                panic!("unknown trim material {material} must keep the slot: {e}")
-            });
-            assert_eq!(trim.material_enum(), Some(TrimMaterial::all()[0]));
+            assert!(
+                TrimImpl::deserialize(&mut encoded.as_slice()).is_err(),
+                "material reference {material} was accepted"
+            );
         }
-        let mut inline = Vec::new();
-        inline.write_var_int(&VarInt(0)).unwrap();
-        inline.write_var_int(&VarInt(1)).unwrap();
-        assert!(TrimImpl::deserialize(&mut inline.as_slice()).is_err());
+    }
+
+    #[test]
+    fn holders_resolve_through_the_synced_registries_and_round_trip() {
+        use crate::codec::registry_ids::{SyncedRegistries, with};
+        use std::sync::Arc;
+
+        let mut synced = SyncedRegistries::new();
+        synced.insert(
+            "minecraft:trim_material",
+            vec!["server:opal".into(), "minecraft:gold".into()],
+        );
+        synced.insert(
+            "minecraft:wolf_variant",
+            vec!["minecraft:ashen".into(), "server:dalmatian".into()],
+        );
+        with(Arc::new(synced), || {
+            let trim = TrimImpl::deserialize(&mut [1u8, 1].as_slice()).unwrap();
+            assert_eq!(trim.material.extract_string(), Some("server:opal"));
+            let mut encoded = Vec::new();
+            trim.serialize(&mut encoded).unwrap();
+            assert_eq!(encoded, [1, 1]);
+
+            let wolf = WolfVariantImpl::deserialize(&mut [1u8].as_slice()).unwrap();
+            assert_eq!(wolf.value, "server:dalmatian");
+            let mut encoded = Vec::new();
+            wolf.serialize(&mut encoded).unwrap();
+            assert_eq!(encoded, [1]);
+            assert!(WolfVariantImpl::deserialize(&mut [2u8].as_slice()).is_err());
+        });
     }
 
     fn enchantment_wire_bytes(id: i32, level: i32) -> Vec<u8> {

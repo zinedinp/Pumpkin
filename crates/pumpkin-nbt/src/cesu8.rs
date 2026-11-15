@@ -4,14 +4,14 @@ use crate::Error;
 
 /// Converts a Java Modified UTF-8 (CESU-8) byte slice into a Rust UTF-8 string.
 ///
-/// Fast-paths valid standard UTF-8 slices that do not contain null bytes (`\0`),
-/// which avoids heap allocations and benefits from standard library SIMD validation.
+/// Fast-paths standard UTF-8 without 4-byte sequences (which Java rejects),
+/// avoiding allocation and using the standard library's SIMD validation.
 ///
 /// # Errors
 /// Returns [`Error::Cesu8DecodingError`] if the bytes are not valid Java CESU-8.
 pub fn from_java_cesu8(bytes: &[u8]) -> Result<Cow<'_, str>, Error> {
-    if let Ok(s) = std::str::from_utf8(bytes)
-        && !bytes.contains(&0)
+    if !bytes.iter().any(|&b| b >= 0xF0)
+        && let Ok(s) = std::str::from_utf8(bytes)
     {
         return Ok(Cow::Borrowed(s));
     }
@@ -31,117 +31,40 @@ pub fn to_java_cesu8(s: &str) -> Cow<'_, [u8]> {
     }
 }
 
+/// Java `DataInputStream.readUTF` (what `StringTag` reads with): fails on
+/// broken sequences (a stray continuation byte, a truncated sequence, a
+/// byte from `0xF0`) like vanilla, but takes raw `0`, overlong forms and
+/// surrogates as Java does. Lone surrogates have no Rust `char` and become
+/// U+FFFD.
 fn decode_java_cesu8(bytes: &[u8]) -> Result<String, Error> {
-    Ok(decode_java_cesu8_lossy(bytes))
-}
-
-/// Java `ModifiedUtf8` with `CodingErrorAction.REPLACE`: invalid bytes
-/// become U+FFFD and the declared slice is still consumed, so a lore NBT
-/// string cannot desync the rest of an item stack.
-fn decode_java_cesu8_lossy(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len());
+    let continuation = |i: usize| match bytes.get(i) {
+        Some(&b) if b & 0xC0 == 0x80 => Ok(u16::from(b & 0x3F)),
+        _ => Err(Error::Cesu8DecodingError),
+    };
+    let mut units = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        let b0 = bytes[i];
-        if b0 == 0 || b0 >= 0xF0 {
-            out.push('\u{FFFD}');
-            i += 1;
-            continue;
-        }
-        if b0 < 0x80 {
-            out.push(b0 as char);
-            i += 1;
-            continue;
-        }
-        if (b0 & 0xE0) == 0xC0 {
-            if i + 1 >= bytes.len() {
-                out.push('\u{FFFD}');
+        let b0 = u16::from(bytes[i]);
+        match b0 >> 4 {
+            0..=7 => {
+                units.push(b0);
                 i += 1;
-                continue;
             }
-            let b1 = bytes[i + 1];
-            if (b1 & 0xC0) != 0x80 {
-                out.push('\u{FFFD}');
-                i += 1;
-                continue;
-            }
-            let cp = (u32::from(b0 & 0x1F) << 6) | u32::from(b1 & 0x3F);
-            if cp == 0 {
-                out.push('\0');
+            12 | 13 => {
+                units.push(((b0 & 0x1F) << 6) | continuation(i + 1)?);
                 i += 2;
-            } else if cp < 0x80 {
-                out.push('\u{FFFD}');
-                i += 1;
-            } else if let Some(c) = char::from_u32(cp) {
-                out.push(c);
-                i += 2;
-            } else {
-                out.push('\u{FFFD}');
-                i += 1;
             }
-            continue;
-        }
-        if (b0 & 0xF0) == 0xE0 {
-            if i + 2 >= bytes.len() {
-                out.push('\u{FFFD}');
-                i += 1;
-                continue;
-            }
-            let b1 = bytes[i + 1];
-            let b2 = bytes[i + 2];
-            if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
-                out.push('\u{FFFD}');
-                i += 1;
-                continue;
-            }
-            let cp =
-                (u32::from(b0 & 0x0F) << 12) | (u32::from(b1 & 0x3F) << 6) | u32::from(b2 & 0x3F);
-            if (0xD800..=0xDBFF).contains(&cp) {
-                if i + 5 >= bytes.len() {
-                    out.push('\u{FFFD}');
-                    i += 1;
-                    continue;
-                }
-                let b3 = bytes[i + 3];
-                let b4 = bytes[i + 4];
-                let b5 = bytes[i + 5];
-                if b3 != 0xED || (b4 & 0xC0) != 0x80 || (b5 & 0xC0) != 0x80 {
-                    out.push('\u{FFFD}');
-                    i += 1;
-                    continue;
-                }
-                let low = (u32::from(b3 & 0x0F) << 12)
-                    | (u32::from(b4 & 0x3F) << 6)
-                    | u32::from(b5 & 0x3F);
-                if !(0xDC00..=0xDFFF).contains(&low) {
-                    out.push('\u{FFFD}');
-                    i += 1;
-                    continue;
-                }
-                let full_cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
-                if let Some(c) = char::from_u32(full_cp) {
-                    out.push(c);
-                    i += 6;
-                } else {
-                    out.push('\u{FFFD}');
-                    i += 1;
-                }
-            } else if (0xDC00..=0xDFFF).contains(&cp) || cp < 0x800 {
-                out.push('\u{FFFD}');
-                i += 1;
-            } else if let Some(c) = char::from_u32(cp) {
-                out.push(c);
+            14 => {
+                units
+                    .push(((b0 & 0x0F) << 12) | (continuation(i + 1)? << 6) | continuation(i + 2)?);
                 i += 3;
-            } else {
-                out.push('\u{FFFD}');
-                i += 1;
             }
-            continue;
+            _ => return Err(Error::Cesu8DecodingError),
         }
-        out.push('\u{FFFD}');
-        i += 1;
     }
-    out
+    Ok(char::decode_utf16(units)
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect())
 }
 
 fn encode_java_cesu8(s: &str) -> Vec<u8> {
@@ -229,10 +152,20 @@ mod tests {
     }
 
     #[test]
-    fn latin1_bytes_are_replaced_and_the_rest_is_kept() {
-        // HugoSMP lore NBT: Latin-1 ä is not CESU-8; vanilla replaces it.
-        let decoded = from_java_cesu8(&[0xE4, b'u', b'f', b'e', b'r']).unwrap();
-        assert_eq!(&decoded[decoded.len() - 4..], "ufer");
-        assert!(decoded.contains('\u{FFFD}'));
+    fn decoding_follows_javas_read_utf() {
+        // Accepted like Java: raw 0, an overlong form, a lone surrogate.
+        assert_eq!(from_java_cesu8(&[b'a', 0, b'b']).unwrap(), "a\0b");
+        assert_eq!(from_java_cesu8(&[0xC1, 0x81]).unwrap(), "A");
+        assert_eq!(from_java_cesu8(&[0xED, 0xA0, 0x81]).unwrap(), "\u{FFFD}");
+        // Rejected like Java: Latin-1 (a lead byte without continuation),
+        // a stray continuation byte, a 4-byte UTF-8 lead, a truncated end.
+        for bad in [
+            &[0xE4, b'u', b'f'][..],
+            &[0x80],
+            &[0xF0, 0x9F, 0x98, 0x80],
+            &[0xC3],
+        ] {
+            assert!(from_java_cesu8(bad).is_err(), "{bad:x?} was accepted");
+        }
     }
 }

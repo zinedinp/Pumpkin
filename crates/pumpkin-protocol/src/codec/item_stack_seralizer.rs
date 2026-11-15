@@ -293,8 +293,7 @@ impl ItemStackSerializer<'_> {
                     .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
                     .to_dyn()
             } else {
-                deserialize(id, read)
-                    .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
+                deserialize(id, read).map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
             };
             patch.push((id, Some(component_impl)));
         }
@@ -449,8 +448,7 @@ impl ItemStackSerializer<'_> {
                     .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
                     .to_dyn()
             } else {
-                deserialize(id, read)
-                    .map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
+                deserialize(id, read).map_err(|e| ReadingError::Message(format!("{id:?}: {e}")))?
             };
             patch.push((id, Some(component_impl)));
         }
@@ -860,7 +858,7 @@ mod tests {
     use super::*;
     use pumpkin_data::data_component_impl::CustomModelDataImpl;
 
-    /// Vanilla `Utf8String.read` replaces Latin-1 bytes. HugoSMP auction
+    /// Vanilla `Utf8String.read` replaces Latin-1 bytes. `HugoSMP` auction
     /// lore/custom-model strings do this; dropping the slot hid the item.
     #[test]
     fn an_item_stack_with_latin1_in_a_protocol_string_still_decodes() {
@@ -891,37 +889,29 @@ mod tests {
     }
 
     #[test]
-    fn unknown_holder_registry_ids_keep_the_slot() {
-        // HugoSMP auction lore leftover as a variant id used to drop the
-        // whole SetSlot (custom_model_data never applied). Pig/chicken/cow
-        // share `codec_registry_variant`; villager and painting follow it.
-        for (component, variant_id) in [
-            (89u8, 110u8), // WolfVariant
-            (92, 110),     // FoxVariant
-            (100, 110),    // PigVariant
-            (102, 110),    // CowVariant
-            (104, 110),    // ChickenVariant
-            (108, 110),    // HorseVariant
-            (88, 110),     // VillagerVariant
-            (109, 110),    // PaintingVariant holder (registry id 109)
-            (110, 110),    // LlamaVariant
-        ] {
-            let body = [
-                1u8, // count
-                1,   // item id
-                1,   // one component to add
-                0,   // none to remove
-                component,
-                variant_id,
-            ];
-            ItemStackSerializer::read(&mut body.as_slice()).unwrap_or_else(|e| {
-                panic!("unknown variant on component {component} must keep the stack: {e}")
-            });
-        }
-        // ArmorTrim: two holder references (material, pattern).
-        let trim = [1u8, 1, 1, 0, 58, 110, 110];
-        ItemStackSerializer::read(&mut trim.as_slice())
-            .expect("unknown trim holders must keep the stack");
+    fn holder_ids_of_the_servers_registries_keep_the_slot() {
+        // A server's synced registries can hold more entries than vanilla
+        // (datapacks); their ids must resolve, not drop the SetSlot.
+        use crate::codec::registry_ids::{SyncedRegistries, with};
+        use std::sync::Arc;
+
+        let mut synced = SyncedRegistries::new();
+        let mut wolves: Vec<String> = pumpkin_data::wolf_variant::WolfVariant::all()
+            .iter()
+            .map(|v| format!("minecraft:{}", v.to_name()))
+            .collect();
+        wolves.resize(111, "server:extra".into());
+        synced.insert("minecraft:wolf_variant", wolves);
+        // count, item, one component to add, none to remove, WolfVariant, id
+        let body = [1u8, 1, 1, 0, 89, 110];
+        with(Arc::new(synced), || {
+            ItemStackSerializer::read(&mut body.as_slice())
+                .expect("a synced registry id must keep the stack");
+        });
+        assert!(
+            ItemStackSerializer::read(&mut body.as_slice()).is_err(),
+            "an id no registry knows fails as in vanilla"
+        );
     }
 
     #[test]
