@@ -23,9 +23,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         assets_dir.join("conventional_tags").display()
     );
 
-    if mc_data_dir.is_dir() {
+    // Written last by `ensure_datapack`: a datapack without it is a partial
+    // extraction (an interrupted first build) or of another version.
+    let marker = datapack_dir.join(format!(".extracted-{MC_VERSION}"));
+    if mc_data_dir.is_dir() && marker.is_file() {
         copy_conventional_tags(&assets_dir, &datapack_dir);
         return Ok(());
+    }
+    if datapack_dir.exists() {
+        println!(
+            "cargo:warning=Vanilla datapack at {} is incomplete or outdated, extracting it again.",
+            datapack_dir.display()
+        );
+        fs::remove_dir_all(&datapack_dir)?;
     }
 
     println!(
@@ -89,7 +99,14 @@ fn ensure_datapack(assets_dir: &Path, version: &str) -> Result<(), Box<dyn std::
     };
 
     println!("cargo:warning=Extracting datapack from server jar...");
-    extract_datapack(&jar_bytes, version, &datapack_dir)?;
+    // Into a sibling first, so an interrupted extraction never looks done.
+    let partial = assets_dir.join("datapack.partial");
+    if partial.exists() {
+        fs::remove_dir_all(&partial)?;
+    }
+    extract_datapack(&jar_bytes, version, &partial)?;
+    fs::write(partial.join(format!(".extracted-{version}")), "")?;
+    fs::rename(&partial, &datapack_dir)?;
     copy_conventional_tags(assets_dir, &datapack_dir);
     println!("cargo:warning=Datapack extraction complete.");
     Ok(())

@@ -110,6 +110,7 @@ data/*
 
 # Downloaded vanilla datapack
 /assets/datapack/
+/assets/datapack.partial/
 
 # project's configurations
 pumpkin.toml
