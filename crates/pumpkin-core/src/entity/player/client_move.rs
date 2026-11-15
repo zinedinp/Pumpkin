@@ -23,7 +23,7 @@ use crate::server::Server;
 use crate::world::chunker;
 
 use super::Player;
-use super::move_check::{self, MoveAttempt, MoveVerdict};
+use super::move_check::{self, MoveAttempt, MoveVerdict, Mover};
 use super::statistics::StatisticCategory;
 
 /// One client move this tick, from Java `ServerboundMovePlayerPacket` or Bedrock `PlayerAuthInput`.
@@ -45,11 +45,11 @@ pub enum ClientMoveOutcome {
 }
 
 impl Player {
-    const fn clamp_horizontal(pos: f64) -> f64 {
+    pub(super) const fn clamp_horizontal(pos: f64) -> f64 {
         pos.clamp(-3.0E7, 3.0E7)
     }
 
-    const fn clamp_vertical(pos: f64) -> f64 {
+    pub(super) const fn clamp_vertical(pos: f64) -> f64 {
         pos.clamp(-2.0E7, 2.0E7)
     }
 
@@ -254,6 +254,7 @@ impl Player {
         {
             let tick = server.tick_count.load(Ordering::Relaxed);
             let attempt = MoveAttempt {
+                mover: Mover::Player,
                 start: last_pos,
                 target: pos,
                 first_good,

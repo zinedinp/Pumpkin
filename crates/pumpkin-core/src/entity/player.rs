@@ -1,6 +1,7 @@
 pub mod advancement;
 pub mod client_move;
 pub mod client_push;
+pub mod client_vehicle_move;
 pub mod custom_movement;
 pub mod move_check;
 mod shoulders;
@@ -3194,7 +3195,12 @@ impl Player {
     /// Inbound packets go first, for all players, so every tick sees this tick's moves.
     #[expect(clippy::too_many_lines)]
     pub fn tick<'a>(&'a self, server: &'a Server) {
-        self.move_check.start_tick(self.get_entity().pos.load());
+        let steered = self.steered_root_vehicle().map(|vehicle| {
+            let entity = vehicle.get_entity();
+            (entity.entity_id, entity.pos.load())
+        });
+        self.move_check
+            .start_tick(self.get_entity().pos.load(), steered);
         if let ClientPlatform::Bedrock(client) = self.client.as_ref() {
             client.tick_network_latency(self);
         }

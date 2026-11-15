@@ -971,7 +971,7 @@ impl JavaClient {
                 );
             }
             id if id == SMoveVehicle::to_id(version) => {
-                self.handle_move_vehicle(player, &SMoveVehicle::read(&mut payload, &version)?);
+                self.handle_move_vehicle(player, server, &SMoveVehicle::read(&mut payload, &version)?);
             }
             id if id == SPaddleBoat::to_id(version) => {
                 self.handle_paddle_boat(player, &SPaddleBoat::read(&mut payload, &version)?);

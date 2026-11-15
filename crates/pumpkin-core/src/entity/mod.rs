@@ -2412,7 +2412,7 @@ impl Entity {
 
     /// Block collisions, then stepping up onto what was hit.
     #[expect(clippy::float_cmp)]
-    fn adjust_movement_for_collisions(
+    pub(crate) fn adjust_movement_for_collisions(
         &self,
         movement: Vector3<f64>,
         caller: &dyn EntityBase,
