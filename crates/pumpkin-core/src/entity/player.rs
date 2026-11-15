@@ -5885,6 +5885,16 @@ impl Player {
     }
 
     pub fn break_block(self: &Arc<Self>, position: &BlockPos) -> bool {
+        self.break_block_with(position, pumpkin_world::world::BlockFlags::NOTIFY_ALL)
+    }
+
+    /// [`Self::break_block`] with the update `flags` of the change (drops
+    /// are decided here). A swap breaks without neighbour updates.
+    pub fn break_block_with(
+        self: &Arc<Self>,
+        position: &BlockPos,
+        flags: pumpkin_world::world::BlockFlags,
+    ) -> bool {
         let world = self.world();
         let (block, state) = world.get_block_and_state(position);
         if state.is_air() {
@@ -5902,8 +5912,7 @@ impl Player {
             let new_state = world.break_block(
                 position,
                 Some(self),
-                pumpkin_world::world::BlockFlags::NOTIFY_ALL
-                    | pumpkin_world::world::BlockFlags::SKIP_DROPS,
+                flags | pumpkin_world::world::BlockFlags::SKIP_DROPS,
             );
             if new_state.is_some() {
                 if let Some(server) = &server {
@@ -5918,10 +5927,9 @@ impl Player {
 
         let block_drop = self.can_harvest(state, block);
         let flags = if block_drop {
-            pumpkin_world::world::BlockFlags::NOTIFY_ALL
+            flags
         } else {
-            pumpkin_world::world::BlockFlags::SKIP_DROPS
-                | pumpkin_world::world::BlockFlags::NOTIFY_ALL
+            flags | pumpkin_world::world::BlockFlags::SKIP_DROPS
         };
 
         let new_state = world.break_block(position, Some(self), flags);

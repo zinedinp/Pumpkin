@@ -308,7 +308,7 @@ impl JavaClient {
         );
     }
 
-    fn sync_block_state_to_client(&self, world: &World, position: BlockPos) {
+    pub(super) fn sync_block_state_to_client(&self, world: &World, position: BlockPos) {
         let synced_state_id = world.get_block_state_id(&position);
         self.try_send_packet(&CBlockUpdate::new(
             position,

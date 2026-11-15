@@ -260,6 +260,7 @@ pub mod set_jigsaw_block;
 pub mod set_structure_block;
 pub mod set_test_block;
 pub mod spectate_entity;
+pub mod swap_block;
 pub mod swing_arm;
 pub mod tag_query;
 pub mod teleport_to_entity;

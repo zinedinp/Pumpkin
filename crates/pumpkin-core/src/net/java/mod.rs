@@ -1201,11 +1201,16 @@ impl JavaClient {
 
                 if channel_str == pumpkin_protocol::java::melon_movement::CHANNEL {
                     player.handle_movement_payload(server, payload.data);
+                } else if channel_str == pumpkin_protocol::java::melon_swap::CHANNEL {
+                    self.handle_swap_block(player, server, payload.data, &version)?;
                 } else if channel_str == "minecraft:register" {
                     if let Ok(channels_data) = std::str::from_utf8(payload.data) {
                         for ch in channels_data.split('\0') {
                             if !ch.is_empty() {
                                 player.register_channel(ch);
+                                if ch == pumpkin_protocol::java::melon_swap::CHANNEL {
+                                    self.accept_swap_channel(player);
+                                }
                                 let mut reg_event = crate::plugin::api::events::player::player_register_channel::PlayerRegisterChannelEvent::new(
                                     player.clone(),
                                     ch.to_string(),
