@@ -1,8 +1,9 @@
-//! The vehicle a player steers moves on its client, as vanilla's
-//! `handleMoveVehicle` and `handlePaddleBoat` take it: the client reports
-//! where it is, the server checks the move ([`super::move_check`]) and
-//! snaps the client back with `ClientboundMoveVehiclePacket` when it
-//! refuses one.
+//! The vehicle a player steers moves on its client (`handleMoveVehicle`).
+//!
+//! The client reports where the vehicle is and which paddles row
+//! (`handlePaddleBoat`); the server checks the move
+//! ([`super::move_check`]) and snaps the client back with
+//! `ClientboundMoveVehiclePacket` when it refuses one.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -67,12 +68,16 @@ impl Player {
     }
 
     /// `handleMoveVehicle`.
-    pub fn apply_client_vehicle_move(self: &Arc<Self>, server: &Arc<Server>, requested: VehicleMove) {
+    pub fn apply_client_vehicle_move(
+        self: &Arc<Self>,
+        server: &Arc<Server>,
+        requested: VehicleMove,
+    ) {
         let pos = requested.position;
-        if !(pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite())
-            || !requested.yaw.is_finite()
-            || !requested.pitch.is_finite()
-        {
+        let finite = [pos.x, pos.y, pos.z].iter().all(|v| v.is_finite())
+            && requested.yaw.is_finite()
+            && requested.pitch.is_finite();
+        if !finite {
             self.client.try_kick(
                 DisconnectReason::Kicked,
                 &TextComponent::translate_cross(
@@ -98,7 +103,12 @@ impl Player {
         if !self.controls(vehicle.as_ref()) {
             // The client thinks it steers what the server says it doesn't.
             let tick = server.tick_count.load(Ordering::Relaxed);
-            let far = vehicle.get_entity().pos.load().squared_distance_to_vec(&pos) > 1.0;
+            let far = vehicle
+                .get_entity()
+                .pos
+                .load()
+                .squared_distance_to_vec(&pos)
+                > 1.0;
             if self.move_check.vehicle_reset_due(tick, far) {
                 tracing::warn!(
                     "{} was expected to be controlling vehicle {} but was not. Resetting vehicle position.",
