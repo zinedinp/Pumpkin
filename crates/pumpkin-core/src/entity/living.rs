@@ -745,7 +745,7 @@ impl LivingEntity {
     /// attribute map and sends the changed attributes to clients. Without this
     /// the client never sees the reduced attack speed and does not show the
     /// crosshair attack indicator.
-    fn update_weapon_attributes(&self, stack: &ItemStack) {
+    pub(crate) fn update_weapon_attributes(&self, stack: &ItemStack) {
         let component = stack.get_data_component::<AttributeModifiersImpl>();
 
         // Single pass over the item's modifiers, split by attribute.
@@ -825,12 +825,7 @@ impl LivingEntity {
         }
     }
 
-    /// Re-applies modifiers from every currently equipped stack and sends updates.
-    pub fn send_current_equipment_attribute_modifiers(&self) {
-        self.apply_and_send_equipment_attribute_modifiers(&self.snapshot_equipped_stacks());
-    }
-
-    fn snapshot_equipped_stacks(&self) -> Vec<(EquipmentSlot, ItemStack)> {
+    pub(crate) fn snapshot_equipped_stacks(&self) -> Vec<(EquipmentSlot, ItemStack)> {
         let guard = self
             .entity_equipment
             .lock()

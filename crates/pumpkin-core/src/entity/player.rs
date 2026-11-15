@@ -5972,7 +5972,7 @@ impl Player {
     /// The id under which Pumpkin will store it's `mining_efficiency` modifier value
     const EFFICIENCY_ATTRIBUTE_MODIFIER_ID: &'static str = "minecraft:enchantment.efficiency";
 
-    fn sync_mining_efficiency(&self) {
+    pub(crate) fn sync_mining_efficiency(&self) {
         let level = self
             .inventory()
             .held_item()
@@ -6002,6 +6002,19 @@ impl Player {
         );
     }
 
+    /// Applies and sends the item attributes of everything worn and held.
+    /// A player's main hand is the selected inventory slot, not part of
+    /// `entity_equipment`, so it is added here (on join and respawn).
+    pub fn send_equipment_attributes(&self) {
+        let held = self.inventory.held_item();
+        let mut equipment = self.living_entity.snapshot_equipped_stacks();
+        equipment.push((EquipmentSlot::MAIN_HAND, held.clone()));
+        self.living_entity
+            .apply_and_send_equipment_attribute_modifiers(&equipment);
+        self.living_entity.update_weapon_attributes(&held);
+        self.sync_mining_efficiency();
+    }
+
     pub fn get_mining_speed(&self, block: &'static Block) -> f32 {
         self.sync_mining_efficiency();
         let held_item = self.inventory.held_item();
@@ -6029,6 +6042,9 @@ impl Player {
             };
             speed *= fatigue_speed;
         }
+        speed *= self
+            .living_entity
+            .get_attribute_value(&Attributes::BLOCK_BREAK_SPEED) as f32;
         // TODO: Handle when in water
         if !self.living_entity.entity.on_ground.load(Ordering::Relaxed) {
             speed /= 5.0;

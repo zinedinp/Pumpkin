@@ -26,5 +26,6 @@ impl JavaClient {
         let stack = inv.held_item();
         let equipment = &[(EquipmentSlot::MAIN_HAND, stack)];
         player.living_entity.send_equipment_changes(equipment);
+        player.sync_mining_efficiency();
     }
 }

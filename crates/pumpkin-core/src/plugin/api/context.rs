@@ -277,6 +277,8 @@ impl Context {
 
     /// Allows a custom movement state (`melon:movement`), or replaces its
     /// spec, and tells the players' clients.
+    // TODO(mods): native plugins only; the WIT world of wasm plugins has
+    // neither this nor the move checks below.
     pub fn register_movement(
         &self,
         spec: pumpkin_data::mod_movement::MovementSpec,

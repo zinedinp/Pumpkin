@@ -123,6 +123,10 @@ impl MoveCheck for MovedWrongly {
             return MoveVerdict::Accept;
         }
         let delta = attempt.target - attempt.start;
+        // TODO(parity): `collide` knows blocks only: no step-up, no entity
+        // colliders (boats, shulkers) and no world border, unlike
+        // `Player.move`. Too lenient there; differing block shapes could
+        // still snap a legit move back.
         let moved = entity.collide(delta, player).movement;
         let mut miss = attempt.target - (attempt.start + moved);
         // Vanilla's `yDist > -0.5 || yDist < 0.5` always holds: only the
@@ -131,6 +135,8 @@ impl MoveCheck for MovedWrongly {
         if miss.length_squared() <= 0.0625 {
             return MoveVerdict::Accept;
         }
+        // TODO(parity): vanilla also rejects a passing move that enters a
+        // block the old box didn't touch (`isEntityCollidingWithAnythingNew`).
         // A player already stuck in blocks may move out of them.
         if !player
             .world()

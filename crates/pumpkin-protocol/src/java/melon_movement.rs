@@ -9,6 +9,9 @@
 //!
 //! One tag byte, then `VarInt`s and `VarInt`-prefixed UTF-8 strings.
 
+// TODO(upstream): Melon-specific. For a Pumpkin PR, a neutral channel name
+// and the payload behind a generic custom-movement API, or out of core.
+
 /// The plugin channel.
 pub const CHANNEL: &str = "melon:movement";
 

@@ -95,6 +95,9 @@ impl Player {
     }
 
     /// `Start`: an allowed state off cooldown gets its grace and is shown.
+    // TODO(mods): an unknown, cooling-down or cancelled start is dropped
+    // silently; the client keeps moving and only the move checks answer.
+    // A `Denied` reply would let it stop the state.
     fn start_custom_movement(self: &Arc<Self>, server: &Arc<Server>, id: String) {
         let Some(spec) = mod_movement::movement(&id) else {
             debug!("{} started unknown movement {id}", self.gameprofile.name);
