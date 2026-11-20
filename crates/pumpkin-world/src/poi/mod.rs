@@ -521,6 +521,11 @@ fn sections_at_distance(section: SectionPos, distance: i32) -> Vec<SectionPos> {
     result
 }
 
+/// `poi/r.<x>.<z>.mca` in `folder`.
+fn region_path(folder: &Path, rx: i32, rz: i32) -> PathBuf {
+    folder.join(format!("r.{rx}.{rz}.mca"))
+}
+
 /// Region-based POI storage using MCA format
 pub struct PoiStorage {
     /// Path to the poi folder
@@ -544,13 +549,12 @@ impl PoiStorage {
         (chunk_x >> 5, chunk_z >> 5)
     }
 
-    fn region_path(&self, rx: i32, rz: i32) -> PathBuf {
-        self.folder.join(format!("r.{rx}.{rz}.mca"))
-    }
-
     fn get_or_load_region(&mut self, rx: i32, rz: i32) -> &mut PoiRegion {
-        let path = self.region_path(rx, rz);
+        // The path is only built for a region that isn't loaded yet: villagers
+        // and zombies look regions up many times a tick.
+        let folder = &self.folder;
         self.regions.entry((rx, rz)).or_insert_with(|| {
+            let path = region_path(folder, rx, rz);
             PoiRegion::load(&path).unwrap_or_else(|e| {
                 if path.exists() {
                     warn!("Failed to load POI region {}: {}", path.display(), e);
