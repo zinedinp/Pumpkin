@@ -1361,9 +1361,9 @@ interface bedrock-packets {
   }
   /// Sent by the server to send all crafting and smelting recipes available in the world.
   record c-crafting-data {
-    /// List of shaped and shapeless crafting recipes.
+    /// Additional shaped and shapeless recipes (or incremental recipes when `clean_recipes` is false).
     recipes: list<bedrock-recipe>,
-    /// Whether previous recipe entries should be cleared on the client.
+    /// Whether previous recipe entries should be cleared and replaced with the full static + dynamic set.
     clean-recipes: bool,
   }
   /// Sent by the server to populate the creative inventory menu with item categories, groups, and items.
@@ -2784,7 +2784,7 @@ interface bedrock-packets {
     c-update-equip(c-update-equip),
     /// Opens or refreshes a Bedrock merchant screen with its complete offer list.
     c-update-trade(c-update-trade),
-    /// Sends custom collision and selection voxel shapes to the client.
+    /// Sends collision and selection voxel shapes to the client before `CStartGame`.
     c-voxel-shapes,
     unknown,
   }
