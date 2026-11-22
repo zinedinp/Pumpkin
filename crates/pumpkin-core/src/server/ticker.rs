@@ -10,7 +10,8 @@ use pumpkin_gametest::GameTestRunner;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use tracing::{debug, warn};
+use super::host::PauseStep;
+use tracing::{debug, info, warn};
 
 const NANOSECONDS_PER_MILLISECOND: i64 = 1_000_000;
 const NANOSECONDS_PER_SECOND: i64 = 1_000_000_000;
@@ -59,9 +60,37 @@ impl Ticker {
             park_thread.unpark();
         });
 
+        let mut was_paused = false;
         'ticker: loop {
             // Doubles as the tick-duration start, so the loop reads the clock twice.
             let tick_start_nanos = elapsed_nanos(base);
+
+            // An embedded server stands still while its host pauses.
+            let step = PauseStep::between(
+                was_paused,
+                server.host.pauses(server.get_player_count() > 0),
+            );
+            was_paused = step.is_paused();
+            match step {
+                PauseStep::Pausing => {
+                    info!("Saving and pausing game...");
+                    if let Err(error) = server.runtime.block_on(server.save_all()) {
+                        warn!("Saving before the pause failed: {error}");
+                    }
+                }
+                PauseStep::Resuming => server.resume_from_pause(),
+                PauseStep::Running | PauseStep::Paused => {}
+            }
+            if step.is_paused() {
+                server.tick_paused();
+                schedule.next_tick_nanos = tick_start_nanos
+                    + server.tick_rate_manager.nanoseconds_per_tick();
+                wait_until_next_tick(server, base, schedule.next_tick_nanos);
+                if server.stop_token.is_cancelled() {
+                    break 'ticker;
+                }
+                continue;
+            }
             let manager = &server.tick_rate_manager;
             let sprinting = manager.is_sprinting();
             let this_tick_nanos = if sprinting {

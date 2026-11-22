@@ -56,6 +56,7 @@ pub mod builtin_game_tests;
 mod connection_cache;
 pub(crate) mod debug_profiler;
 pub mod enchantment;
+pub mod host;
 mod key_store;
 pub mod recipe;
 pub mod scheduler;
@@ -171,6 +172,8 @@ pub struct Server {
     // world stuff which maybe should be put into a struct
     pub level_info: Arc<ArcSwap<LevelData>>,
     world_info_writer: Arc<dyn WorldInfoWriter>,
+    /// What the host of an embedded server controls; inert on a standalone server.
+    pub host: host::Host,
 }
 
 impl Server {
@@ -350,6 +353,10 @@ impl Server {
             branding: CachedBranding::new(),
             bossbars: std::sync::Mutex::new(CustomBossbars::new()),
             map_manager: MapManager::new(),
+            host: host::Host::new(
+                advanced_config.networking.java.online_mode,
+                basic_config.hardcore,
+            ),
             defaultgamemode,
             player_data_storage,
             command_storage: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -740,6 +747,14 @@ impl Server {
             // The data file itself proves this is a returning player. Older Bedrock
             // sessions could persist HasPlayedBefore as false and mask a valid Pos.
             player.has_played_before.store(true, Ordering::Relaxed);
+        }
+        if self.host.is_embedded() {
+            let level = self.permission_level_of(&player.gameprofile.id, &player.gameprofile.name);
+            player.permission_lvl.store(level);
+            // `calculateGameModeForNewPlayer`.
+            if self.host.forces_game_mode() && level < PermissionLvl::Two {
+                player.gamemode.store(gamemode);
+            }
         }
 
         // Wrap in Arc after data is loaded
@@ -1269,6 +1284,93 @@ impl Server {
             self.flush_pending_block_updates();
             Self::resume_player_flushes(&suspended);
         });
+    }
+
+    /// `IntegratedServer.tickPaused`: the players' packets come in and what is
+    /// pending goes out, but nothing in the worlds moves.
+    pub fn tick_paused(self: &Arc<Self>) {
+        self.simulation_pool.install(|| {
+            let suspended = self.suspend_player_flushes();
+            for world in self.worlds.load().iter() {
+                world
+                    .players
+                    .load()
+                    .par_iter()
+                    .for_each(|player| player.process_inbound_packets());
+            }
+            self.flush_pending_block_updates();
+            Self::resume_player_flushes(&suspended);
+        });
+    }
+
+    /// `forceGameTimeSynchronization` on every world, when a pause ends.
+    pub fn resume_from_pause(&self) {
+        for world in self.worlds.load().iter() {
+            world.force_game_time_synchronization(self);
+        }
+    }
+
+    /// The permission level the player `id`/`name` has now: its operator entry,
+    /// or what [`host::Host::permission_level`] gives an embedded server's players.
+    #[must_use]
+    pub fn permission_level_of(&self, id: &uuid::Uuid, name: &str) -> PermissionLvl {
+        let listed = self
+            .data
+            .operator_config
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_entry(id)
+            .map(|op| op.level);
+        self.host
+            .permission_level(name, listed, self.advanced_config.commands.default_op_level)
+    }
+
+    /// Sends every player whose level changed (the host's rules did) its new one.
+    pub fn refresh_permissions(self: &Arc<Self>) {
+        let dispatcher = self.command_dispatcher.load();
+        for player in self.get_all_players() {
+            let level = self.permission_level_of(&player.gameprofile.id, &player.gameprofile.name);
+            if player.permission_lvl.load() != level {
+                player.set_permission_lvl(self, level, &dispatcher);
+            }
+        }
+    }
+
+    /// `updateGameModeBasedOnPermission`: with the game mode forced, players
+    /// without the game master's commands play the default one. How many changed.
+    pub fn enforce_game_mode(self: &Arc<Self>) -> usize {
+        if !self.host.is_embedded() || !self.host.force_game_mode() {
+            return 0;
+        }
+        let mode = self.default_game_mode();
+        let mut changed = 0;
+        for player in self.get_all_players() {
+            if player.permission_lvl.load() < PermissionLvl::Two
+                && player.gamemode.load() != mode
+                && player.set_gamemode(mode)
+            {
+                changed += 1;
+            }
+        }
+        changed
+    }
+
+    /// The game mode new players start in (`/defaultgamemode`).
+    #[must_use]
+    pub fn default_game_mode(&self) -> GameMode {
+        self.defaultgamemode
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .gamemode
+    }
+
+    /// `setWorldGameType`: the default game mode, then the forced one.
+    pub fn set_default_game_mode(self: &Arc<Self>, mode: GameMode) {
+        self.defaultgamemode
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .gamemode = mode;
+        self.enforce_game_mode();
     }
 
     fn flush_pending_block_updates(&self) {
