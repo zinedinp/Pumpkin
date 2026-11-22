@@ -18,6 +18,7 @@ use tokio::{
     net::TcpListener,
     sync::{Mutex, OnceCell, mpsc},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
 
 use crate::server::Server;
@@ -43,6 +44,7 @@ impl NetherNetListener {
         identity_key: Arc<SigningKey>,
         oidc_verifier: Option<Arc<OnceCell<(String, Jwks)>>>,
         ice_socket: IceSocket,
+        stop: CancellationToken,
     ) -> std::io::Result<Self> {
         let config = &server.advanced_config.networking.bedrock.nethernet;
         let address = config.address;
@@ -53,7 +55,7 @@ impl NetherNetListener {
                 ice_socket,
                 Arc::downgrade(server),
                 server.server_guid,
-                server.stop_token.clone(),
+                stop.clone(),
             )
             .await?,
         );
@@ -63,13 +65,15 @@ impl NetherNetListener {
             server: Arc::downgrade(server),
             incoming,
             identity_key,
-            require_client_identity: server.advanced_config.networking.bedrock.online_mode,
+            require_client_identity: server
+                .host
+                .online_mode(server.advanced_config.networking.bedrock.online_mode),
             oidc_verifier,
             stun_servers: config.stun_servers.clone().into(),
             ice_local_addr,
             external_ip: config.external_ip,
             ice_router,
-            stop_token: server.stop_token.clone(),
+            stop_token: stop.clone(),
         };
         let router = Router::new()
             .route("/v1/join", get(status))
@@ -105,7 +109,7 @@ impl NetherNetListener {
             Err(error) => warn!("Failed to bind NetherNet LAN discovery: {error}"),
         }
 
-        let stop_token = server.stop_token.clone();
+        let stop_token = stop;
         tokio::spawn(async move {
             let result = axum::serve(
                 listener,

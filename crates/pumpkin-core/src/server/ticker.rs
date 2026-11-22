@@ -1,5 +1,6 @@
 use super::server_test_manager::{drain_game_test_queue, has_pending_game_tests};
 
+use super::host::PauseStep;
 use crate::{
     plugin::server::{
         server_tick_end::ServerTickEndEvent, server_tick_start::ServerTickStartEvent,
@@ -10,7 +11,6 @@ use pumpkin_gametest::GameTestRunner;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
-use super::host::PauseStep;
 use tracing::{debug, info, warn};
 
 const NANOSECONDS_PER_MILLISECOND: i64 = 1_000_000;
@@ -48,6 +48,7 @@ pub struct Ticker;
 impl Ticker {
     /// Runs the main server tick loop on a dedicated thread.
     pub fn run(server: &Arc<Server>) {
+        pumpkin_util::threads::started(pumpkin_util::threads::ThreadRole::Tick);
         // Single monotonic base, the schedule is plain nanosecond arithmetic.
         let base = Instant::now();
         let mut schedule = TickSchedule::new();
@@ -83,8 +84,8 @@ impl Ticker {
             }
             if step.is_paused() {
                 server.tick_paused();
-                schedule.next_tick_nanos = tick_start_nanos
-                    + server.tick_rate_manager.nanoseconds_per_tick();
+                schedule.next_tick_nanos =
+                    tick_start_nanos + server.tick_rate_manager.nanoseconds_per_tick();
                 wait_until_next_tick(server, base, schedule.next_tick_nanos);
                 if server.stop_token.is_cancelled() {
                     break 'ticker;

@@ -488,7 +488,15 @@ impl PumpkinServer {
         };
         let oidc_verifier = (config.online_mode && config.authentication.enabled)
             .then(|| server.bedrock_oidc_keys.clone());
-        match NetherNetListener::bind(server, identity_key, oidc_verifier, ice_socket).await {
+        match NetherNetListener::bind(
+            server,
+            identity_key,
+            oidc_verifier,
+            ice_socket,
+            server.stop_token.clone(),
+        )
+        .await
+        {
             Ok(l) => Some(l),
             Err(err) => {
                 error!("Failed to bind Bedrock NetherNet endpoint: {err}");
@@ -736,36 +744,14 @@ impl PumpkinServer {
                 if let Some((session, client_addr)) = nethernet_result {
                     let client_id = *master_client_id_counter;
                     *master_client_id_counter += 1;
-                    let be_clients = bedrock_clients.clone();
-                    let packet_limiter = PacketRateLimiter::from_config(
-                        &self.server.advanced_config.networking.bedrock.packet_limiter,
-                    );
-                    let client = Arc::new(BedrockClient::new(
+                    serve_nethernet_session(
+                        &self.server,
+                        (session, client_addr),
                         client_id,
-                        session.clone(),
-                        client_addr,
-                        be_clients,
-                        packet_limiter,
-                        Arc::downgrade(&self.server),
-                    ));
-                    client.start_outgoing_packet_task();
-                    bedrock_clients.lock().await.insert(client_addr, client.clone());
-
-                    let packet_client = client.clone();
-                    let packet_server = self.server.clone();
-                    tasks.spawn(async move {
-                        while let Some(packet) = session.recv().await {
-                            packet_client
-                                .process_nethernet_packet(&packet_server, packet)
-                                .await;
-                            if packet_client.is_closed() {
-                                break;
-                            }
-                        }
-                        packet_client.close().await;
-                    });
-
-                    self.spawn_bedrock_client_task(client, tasks);
+                        bedrock_clients,
+                        tasks,
+                    )
+                    .await;
                 }
             },
 
@@ -776,36 +762,124 @@ impl PumpkinServer {
         }
         true
     }
+}
 
-    fn spawn_bedrock_client_task(&self, client: Arc<BedrockClient>, tasks: &Arc<TaskTracker>) {
-        let server = self.server.clone();
-        tasks.spawn(async move {
-            let login_result = client.handle_login_sequence(&server).await;
-            match login_result {
-                PacketHandlerResult::Stop => {
+/// Takes in a Bedrock client that came over `NetherNet`: its packets, then its login.
+async fn serve_nethernet_session(
+    server: &Arc<Server>,
+    (session, client_addr): (
+        Arc<crate::net::bedrock::nethernet::NetherNetSession>,
+        SocketAddr,
+    ),
+    client_id: u64,
+    bedrock_clients: &Arc<Mutex<HashMap<SocketAddr, Arc<BedrockClient>>>>,
+    tasks: &Arc<TaskTracker>,
+) {
+    let packet_limiter =
+        PacketRateLimiter::from_config(&server.advanced_config.networking.bedrock.packet_limiter);
+    let client = Arc::new(BedrockClient::new(
+        client_id,
+        session.clone(),
+        client_addr,
+        bedrock_clients.clone(),
+        packet_limiter,
+        Arc::downgrade(server),
+    ));
+    client.start_outgoing_packet_task();
+    bedrock_clients
+        .lock()
+        .await
+        .insert(client_addr, client.clone());
+
+    let packet_client = client.clone();
+    let packet_server = server.clone();
+    tasks.spawn(async move {
+        while let Some(packet) = session.recv().await {
+            packet_client
+                .process_nethernet_packet(&packet_server, packet)
+                .await;
+            if packet_client.is_closed() {
+                break;
+            }
+        }
+        packet_client.close().await;
+    });
+
+    spawn_bedrock_client_task(server, client, tasks);
+}
+
+fn spawn_bedrock_client_task(
+    server: &Arc<Server>,
+    client: Arc<BedrockClient>,
+    tasks: &Arc<TaskTracker>,
+) {
+    let server = server.clone();
+    tasks.spawn(async move {
+        let login_result = client.handle_login_sequence(&server).await;
+        match login_result {
+            PacketHandlerResult::Stop => {
+                client.close().await;
+                client.await_tasks().await;
+            }
+            PacketHandlerResult::ReadyToPlay(profile, config) => {
+                if let Some((player, _world)) = server.add_player(
+                    Arc::new(ClientPlatform::Bedrock(client.clone())),
+                    profile,
+                    Some(config),
+                ) {
+                    client.progress_player_packets(&player).await;
                     client.close().await;
                     client.await_tasks().await;
-                }
-                PacketHandlerResult::ReadyToPlay(profile, config) => {
-                    if let Some((player, _world)) = server.add_player(
-                        Arc::new(ClientPlatform::Bedrock(client.clone())),
-                        profile,
-                        Some(config),
-                    ) {
-                        client.progress_player_packets(&player).await;
-                        client.close().await;
-                        client.await_tasks().await;
-                        player.remove().await;
-                        server.remove_player(&player);
-                        if let Err(error) = server.player_data_storage.handle_player_leave(&player)
-                        {
-                            error!("Failed to save player data on disconnect: {error}");
-                        }
+                    player.remove().await;
+                    server.remove_player(&player);
+                    if let Err(error) = server.player_data_storage.handle_player_leave(&player) {
+                        error!("Failed to save player data on disconnect: {error}");
                     }
                 }
             }
-        });
-    }
+        }
+    });
+}
+
+/// Opens an embedded server to Bedrock clients at the config's `NetherNet`
+/// address while it runs, until `stop` is cancelled (vanilla's LAN publish).
+/// Xbox sign-in follows [`server::host::Host::online_mode`]. Returns once
+/// the listener is up, or why it could not bind.
+pub async fn listen_bedrock(
+    server: Arc<Server>,
+    stop: CancellationToken,
+    tasks: Arc<TaskTracker>,
+) -> std::io::Result<()> {
+    let config = &server.advanced_config.networking.bedrock;
+    let ice_socket = IceSocket::bind(config.nethernet.address).await?;
+    let identity_key = load_or_create_identity_key(&config.nethernet.identity_key)?;
+    let oidc_verifier = (server.host.online_mode(config.online_mode)
+        && config.authentication.enabled)
+        .then(|| server.bedrock_oidc_keys.clone());
+    let listener = NetherNetListener::bind(
+        &server,
+        identity_key,
+        oidc_verifier,
+        ice_socket,
+        stop.clone(),
+    )
+    .await?;
+    let clients = Arc::new(Mutex::new(HashMap::new()));
+    tokio::spawn(async move {
+        // Apart from the Java connections' ids.
+        let mut next_id = 1u64 << 48;
+        loop {
+            select! {
+                () = stop.cancelled() => break,
+                accepted = listener.accept() => {
+                    let Some(accepted) = accepted else { break };
+                    serve_nethernet_session(&server, accepted, next_id, &clients, &tasks).await;
+                    next_id += 1;
+                }
+            }
+        }
+    });
+    Ok(())
 }
 
 fn setup_stdin_console(server: &Arc<Server>) {

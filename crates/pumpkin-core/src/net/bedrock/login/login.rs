@@ -38,7 +38,10 @@ impl BedrockClient {
         server: &Arc<Server>,
     ) -> Result<PacketHandlerResult, LoginError> {
         let auth_payload: AuthPayload = serde_json::from_slice(&packet.jwt)?;
-        let player_data = if server.advanced_config.networking.bedrock.online_mode {
+        let player_data = if server
+            .host
+            .online_mode(server.advanced_config.networking.bedrock.online_mode)
+        {
             match auth_payload.authentication_type {
                 AuthenticationType::Full => {
                     verify_oidc_token_path(server, &auth_payload.token, false).await?

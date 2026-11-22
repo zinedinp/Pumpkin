@@ -18,6 +18,17 @@ impl PendingConnection {
         }
         self.login_started = true;
 
+        // Vanilla `getSingleplayerProfile`: the host over its own pipe comes in as
+        // itself, unverified, uncompressed and unencrypted.
+        if let Some(profile) = self
+            .local_profile
+            .take()
+            .filter(|profile| profile.name.eq_ignore_ascii_case(&login_start.name))
+        {
+            self.gameprofile = Some(profile.clone());
+            return self.finish_login(server, &profile).await;
+        }
+
         let max_players = server.advanced_config.networking.java.max_players;
         if max_players > 0 && server.get_player_count() >= max_players as usize {
             self.kick(TextComponent::translate_cross(
@@ -59,7 +70,10 @@ impl PendingConnection {
                 }
             }
         } else {
-            let id = if server.advanced_config.networking.java.online_mode {
+            let online_mode = server
+                .host
+                .online_mode(server.advanced_config.networking.java.online_mode);
+            let id = if online_mode {
                 login_start.uuid
             } else {
                 offline_uuid(&login_start.name).unwrap_or_else(|_| uuid::Uuid::nil())
@@ -78,7 +92,6 @@ impl PendingConnection {
 
             self.gameprofile = Some(profile.clone());
 
-            let online_mode = server.advanced_config.networking.java.online_mode;
             // Clients before 1.20.5 have no `should_authenticate` flag in `CEncryptionRequest`
             // and always contact Mojang's session server on encryption.
             if server.advanced_config.networking.java.encryption

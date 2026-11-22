@@ -58,7 +58,10 @@ impl PendingConnection {
             profile.name.clone()
         };
 
-        if server.advanced_config.networking.java.online_mode {
+        if server
+            .host
+            .online_mode(server.advanced_config.networking.java.online_mode)
+        {
             match self
                 .authenticate(server, &shared_secret, &profile_name)
                 .await

@@ -143,11 +143,17 @@ impl GenerationSchedule {
         ));
 
         let cpus = thread::available_parallelism().map_or(1, std::num::NonZero::get);
-        let gen_threads = (cpus / 2).clamp(2, 16);
+        let gen_threads = pumpkin_util::threads::budget()
+            .chunk_gen
+            .unwrap_or((cpus / 2).clamp(2, 16))
+            .max(1);
         let generation_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
                 .num_threads(gen_threads)
                 .thread_name(|i| format!("ChunkGen-{i}"))
+                .start_handler(|_| {
+                    pumpkin_util::threads::started(pumpkin_util::threads::ThreadRole::Background);
+                })
                 .build()
                 .expect("Failed to build Chunk Generation ThreadPool"),
         );
@@ -158,6 +164,7 @@ impl GenerationSchedule {
         let handle = thread::Builder::new()
             .name("Schedule".to_string())
             .spawn(move || {
+                pumpkin_util::threads::started(pumpkin_util::threads::ThreadRole::Background);
                 let scheduler = Self {
                     queue: BinaryHeap::new(),
                     graph: DAG::default(),

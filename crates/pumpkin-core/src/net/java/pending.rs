@@ -82,6 +82,8 @@ pub struct PendingConnection {
     pub login_success_sent: bool,
     /// For the connection packet events.
     server: Weak<Server>,
+    /// The host of an embedded server, on its own pipe: logs in as this profile.
+    pub(crate) local_profile: Option<GameProfile>,
 }
 
 impl PendingConnection {
@@ -133,7 +135,24 @@ impl PendingConnection {
             vine_challenge: None,
             velocity_message_id: None,
             server,
+            local_profile: None,
         }
+    }
+
+    /// The host's connection to the server it embeds (vanilla's memory
+    /// connection): it logs in as `profile` when its login names it.
+    #[must_use]
+    pub fn local(
+        read: JavaReadHalf,
+        write: JavaWriteHalf,
+        address: SocketAddr,
+        packet_limiter: PacketRateLimiter,
+        server: Weak<Server>,
+        profile: GameProfile,
+    ) -> Self {
+        let mut connection = Self::from_transport(read, write, address, 0, packet_limiter, server);
+        connection.local_profile = Some(profile);
+        connection
     }
 
     pub fn close(&self) {

@@ -33,8 +33,9 @@ use tracing::{debug, error, info, warn};
 use pumpkin_protocol::java::client::login::CEncryptionRequest;
 use pumpkin_protocol::java::client::play::{CChangeDifficulty, CTabList};
 use pumpkin_protocol::{ClientPacket, java::client::config::CPluginMessage};
-use pumpkin_util::Difficulty;
 use pumpkin_util::text::TextComponent;
+use pumpkin_util::threads::{self, ThreadRole};
+use pumpkin_util::{Difficulty, GameMode, PermissionLvl};
 use pumpkin_world::world_info::anvil::{
     AnvilLevelInfo, LEVEL_DAT_BACKUP_FILE_NAME, LEVEL_DAT_FILE_NAME,
 };
@@ -315,21 +316,25 @@ impl Server {
         let cpus = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let simulation_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
-                .num_threads(cpus)
+                .num_threads(threads::budget().simulation.unwrap_or(cpus))
                 .thread_name(|i| format!("Simulation-{i}"))
+                .start_handler(|_| threads::started(ThreadRole::Tick))
                 .build()
                 .map_err(|e| WorldInfoError::IoError(std::io::Error::other(e)))?,
         );
         let compute_threads = (cpus / 2).clamp(2, 8);
         let compute_pool = Arc::new(
             rayon::ThreadPoolBuilder::new()
-                .num_threads(compute_threads)
+                .num_threads(threads::budget().compute.unwrap_or(compute_threads))
                 .thread_name(|i| format!("Compute-{i}"))
+                .start_handler(|_| threads::started(ThreadRole::Background))
                 .build()
                 .map_err(|e| WorldInfoError::IoError(std::io::Error::other(e)))?,
         );
 
+        let host = host::Host::new(basic_config.hardcore);
         let server = Self {
+            host,
             basic_config,
             advanced_config,
             telemetry_config,
@@ -353,10 +358,6 @@ impl Server {
             branding: CachedBranding::new(),
             bossbars: std::sync::Mutex::new(CustomBossbars::new()),
             map_manager: MapManager::new(),
-            host: host::Host::new(
-                advanced_config.networking.java.online_mode,
-                basic_config.hardcore,
-            ),
             defaultgamemode,
             player_data_storage,
             command_storage: std::sync::Mutex::new(std::collections::HashMap::new()),

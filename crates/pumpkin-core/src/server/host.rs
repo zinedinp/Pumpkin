@@ -15,7 +15,8 @@ pub struct Host {
     paused: AtomicBool,
     /// Open to others: on LAN.
     published: AtomicBool,
-    /// Guests are verified with Mojang (Java) or Xbox (Bedrock).
+    /// Guests are verified with Mojang (Java) or Xbox (Bedrock); the config
+    /// decides on a standalone server.
     online_mode: AtomicBool,
     /// The world's "Allow Commands".
     allow_commands: AtomicBool,
@@ -30,12 +31,12 @@ pub struct Host {
 
 impl Host {
     #[must_use]
-    pub fn new(online_mode: bool, hardcore: bool) -> Self {
+    pub fn new(hardcore: bool) -> Self {
         Self {
             embedded: AtomicBool::new(false),
             paused: AtomicBool::new(false),
             published: AtomicBool::new(false),
-            online_mode: AtomicBool::new(online_mode),
+            online_mode: AtomicBool::new(true),
             allow_commands: AtomicBool::new(false),
             guest_command_access: AtomicBool::new(false),
             force_game_mode: AtomicBool::new(true),
@@ -46,8 +47,10 @@ impl Host {
 
     /// Makes this an embedded server owned by the player `owner`.
     pub fn embed(&self, owner: &str, allow_commands: bool) {
-        *self.owner.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(owner.to_owned());
+        *self
+            .owner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(owner.to_owned());
         self.allow_commands.store(allow_commands, Ordering::Relaxed);
         self.embedded.store(true, Ordering::Release);
     }
@@ -81,9 +84,14 @@ impl Host {
         self.online_mode.store(online, Ordering::Relaxed);
     }
 
+    /// Whether guests are verified: the host's switch when embedded, else `configured`.
     #[must_use]
-    pub fn online_mode(&self) -> bool {
-        self.online_mode.load(Ordering::Relaxed)
+    pub fn online_mode(&self, configured: bool) -> bool {
+        if self.is_embedded() {
+            self.online_mode.load(Ordering::Relaxed)
+        } else {
+            configured
+        }
     }
 
     pub fn set_allow_commands(&self, allow: bool) {
@@ -196,16 +204,18 @@ mod tests {
     use super::*;
 
     fn embedded() -> Host {
-        let host = Host::new(true, false);
+        let host = Host::new(false);
         host.embed("Steve", true);
         host
     }
 
     #[test]
-    fn a_standalone_server_never_pauses_and_keeps_its_operators() {
-        let host = Host::new(true, false);
+    fn a_standalone_server_never_pauses_and_keeps_its_config() {
+        let host = Host::new(false);
         host.set_paused(true);
+        host.set_online_mode(false);
         assert!(!host.pauses(false));
+        assert!(host.online_mode(true));
         assert_eq!(
             host.permission_level("Steve", Some(PermissionLvl::Three), PermissionLvl::Zero),
             PermissionLvl::Three
@@ -219,6 +229,14 @@ mod tests {
         assert!(host.pauses(false));
         host.set_paused(true);
         assert!(host.pauses(true));
+    }
+
+    #[test]
+    fn an_embedded_server_takes_the_hosts_online_mode() {
+        let host = embedded();
+        assert!(host.online_mode(false));
+        host.set_online_mode(false);
+        assert!(!host.online_mode(true));
     }
 
     #[test]

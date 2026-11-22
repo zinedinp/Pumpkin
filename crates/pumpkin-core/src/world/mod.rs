@@ -3728,7 +3728,9 @@ impl World {
                     VarInt(player.get_entity().portal_cooldown.load(Ordering::Relaxed) as i32),
                     self.sea_level.into(),
                 ),
-                server.advanced_config.networking.java.online_mode,
+                server
+                    .host
+                    .online_mode(server.advanced_config.networking.java.online_mode),
                 // This should stay true even when reports are disabled.
                 // It prevents the annoying popup when joining the server.
                 true,
