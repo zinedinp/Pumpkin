@@ -4255,7 +4255,10 @@ impl World {
         chunker::update_position(player);
         // Update commands
 
-        player.set_health(20.0);
+        // No `set_health(20.0)` here: a dimension change kept the player's
+        // health (it healed them), and a respawn already restored it in
+        // `reset_state`. The client hears it again through
+        // `resync_after_respawn`'s `reset_sent_info`.
     }
 
     pub fn explode(
@@ -4680,6 +4683,9 @@ impl World {
 
         // Load chunks and send world info FIRST (before teleport packet)
         target_world.send_world_info(player);
+        if let Some(server) = self.server.upgrade() {
+            player.resync_after_respawn(&server).await;
+        }
         target_world.send_center_chunk(player).await;
 
         // Send teleport packet after at least the center chunk was delivered

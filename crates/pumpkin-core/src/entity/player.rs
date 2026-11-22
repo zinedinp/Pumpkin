@@ -4350,6 +4350,36 @@ impl Player {
         }
     }
 
+    /// Vanilla `ServerPlayer.resetSentInfo`: health, food and experience
+    /// go out again on the next tick that may send them (once the client
+    /// has loaded the level).
+    pub fn reset_sent_info(&self) {
+        self.last_sent_health.store(i32::MIN, Ordering::Relaxed);
+        self.last_sent_food.store(u8::MAX, Ordering::Relaxed);
+        self.last_sent_xp.store(-1, Ordering::Relaxed);
+    }
+
+    /// What a vanilla server sends after `ClientboundRespawnPacket`
+    /// (`PlayerList.respawn`, `ServerPlayer.teleport` into another
+    /// dimension) that Pumpkin did not yet. The client has made a new
+    /// `LocalPlayer` and holds none of it any more: the difficulty, the
+    /// active effects, the tick rate, the inventory, and (through
+    /// [`Self::reset_sent_info`]) health, food and experience.
+    ///
+    /// The held slot is left to the callers: vanilla sends it only when
+    /// changing dimension (`sendAllPlayerInfo`); after a death the new
+    /// client starts at slot 0 and says so itself.
+    pub async fn resync_after_respawn(&self, server: &Server) {
+        self.send_difficulty_update();
+        self.send_active_effects();
+        server.tick_rate_manager.update_joining_player(self).await;
+        // `initInventoryMenu`: the whole menu, not only what changed.
+        if let Ok(mut handler) = self.player_screen_handler.lock() {
+            handler.sync_state();
+        }
+        self.reset_sent_info();
+    }
+
     /// Sets the player's difficulty level.
     pub fn send_difficulty_update(&self) {
         let world = self.world();
@@ -4983,6 +5013,7 @@ impl Player {
                 self.send_health();
 
                 new_world.send_world_info(&player);
+                player.resync_after_respawn(&server).await;
                 new_world.send_center_chunk(&player).await;
 
                 player.request_teleport(position, yaw, pitch);
