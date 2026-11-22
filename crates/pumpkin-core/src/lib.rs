@@ -841,10 +841,11 @@ fn spawn_bedrock_client_task(
     });
 }
 
-/// Opens an embedded server to Bedrock clients at the config's `NetherNet`
-/// address while it runs, until `stop` is cancelled (vanilla's LAN publish).
-/// Xbox sign-in follows [`server::host::Host::online_mode`]. Returns once
-/// the listener is up, or why it could not bind.
+/// Opens an embedded server to Bedrock clients until `stop` is cancelled.
+///
+/// Vanilla's LAN publish, at the config's `NetherNet` address. Xbox sign-in
+/// follows [`server::host::Host::online_mode`]. Returns once the listener is
+/// up, or why it could not bind.
 pub async fn listen_bedrock(
     server: Arc<Server>,
     stop: CancellationToken,

@@ -1,7 +1,9 @@
-//! What the host of an embedded server (a client's integrated server)
-//! controls while it runs: the pause, the owner's rights and the rules for
-//! guests once the world is opened to others (vanilla `IntegratedServer`).
-//! A standalone server is never embedded, and nothing here changes it.
+//! What the host of an embedded server controls while it runs.
+//!
+//! The host is a client's integrated server (vanilla `IntegratedServer`): the
+//! pause, the owner's rights and the rules for guests once the world is
+//! opened to others. A standalone server is never embedded, and nothing here
+//! changes it.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,7 +33,7 @@ pub struct Host {
 
 impl Host {
     #[must_use]
-    pub fn new(hardcore: bool) -> Self {
+    pub const fn new(hardcore: bool) -> Self {
         Self {
             embedded: AtomicBool::new(false),
             paused: AtomicBool::new(false),
