@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+
+use super::is_real_dir;
 use std::path::Path;
 
 use serde_json::Value;
@@ -26,7 +28,7 @@ fn load_predicates_recursive<S: std::hash::BuildHasher>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_predicates_recursive(namespace, base_dir, &path, predicates, loaded);
         } else if path
             .extension()

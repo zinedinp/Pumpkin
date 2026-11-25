@@ -154,6 +154,32 @@ impl<V: Hash + Eq + Copy + Default, const DIM: usize> HeterogeneousPaletteData<V
     }
 }
 
+/// Palette keys packed `64 / bits` to a long, lowest bits first, none split across two longs
+/// (vanilla `SimpleBitStorage`).
+struct PackedKeys<'a> {
+    words: &'a [i64],
+    bits: u8,
+}
+
+impl<'a> PackedKeys<'a> {
+    const fn new(words: &'a [i64], bits: u8) -> Self {
+        Self { words, bits }
+    }
+
+    /// Calls `put` with each slot of `out` and its key, in order. Missing longs read as zero.
+    fn unpack_into<T>(&self, out: &mut [T], mut put: impl FnMut(&mut T, usize)) {
+        let mask = (1u64 << self.bits) - 1;
+        let words = self.words.iter().chain(std::iter::repeat(&0));
+        for (slots, &word) in out.chunks_mut(usize::from(64 / self.bits)).zip(words) {
+            let mut word = word as u64;
+            for slot in slots {
+                put(slot, (word & mask) as usize);
+                word >>= self.bits;
+            }
+        }
+    }
+}
+
 /// A paletted container is a cube of registry ids. It uses a custom compression scheme based on how
 /// may distinct registry ids are in the cube.
 #[derive(Clone)]
@@ -423,36 +449,28 @@ impl<V: Hash + Eq + Copy + Default, const DIM: usize> PalettedContainer<V, DIM> 
         }
 
         let bits_per_key = encompassing_bits(palette.len()).max(minimum_bits_per_entry);
-        let index_mask = (1 << bits_per_key) - 1;
-        let keys_per_i64 = 64 / bits_per_key;
+        let keys = PackedKeys::new(packed_data, bits_per_key);
 
         // Optimized path for indexed storage if palette is small enough
         if palette.len() <= 256 && std::mem::size_of::<V>() > 1 {
             let mut indices = Box::new([[[0u8; DIM]; DIM]; DIM]);
             let mut counts = vec![0u16; palette.len()];
-            let indices_flat = indices.as_flattened_mut().as_flattened_mut();
+            let mut out_of_bounds = 0;
 
-            let mut packed_data_iter = packed_data.iter();
-            let mut current_packed_word = *packed_data_iter.next().unwrap_or(&0);
-
-            for (i, index_out) in indices_flat.iter_mut().enumerate().take(Self::VOLUME) {
-                let bit_index_in_word = i % keys_per_i64 as usize;
-                if bit_index_in_word == 0 && i > 0 {
-                    current_packed_word = *packed_data_iter.next().unwrap_or(&0);
-                }
-
-                let lookup_index = ((current_packed_word as u64)
-                    >> (bit_index_in_word as u64 * bits_per_key as u64))
-                    & index_mask;
-
-                let idx = lookup_index as usize;
-                if idx < palette.len() {
-                    *index_out = idx as u8;
-                    counts[idx] += 1;
-                } else {
-                    warn!("Lookup index out of bounds! Defaulting...");
-                    counts[0] += 1;
-                }
+            keys.unpack_into(
+                indices.as_flattened_mut().as_flattened_mut(),
+                |index_out, idx| {
+                    if idx < palette.len() {
+                        *index_out = idx as u8;
+                        counts[idx] += 1;
+                    } else {
+                        out_of_bounds += 1;
+                        counts[0] += 1;
+                    }
+                },
+            );
+            if out_of_bounds > 0 {
+                warn!("{out_of_bounds} lookup indices out of bounds! Defaulting...");
             }
 
             return Self::Heterogeneous(Box::new(HeterogeneousPaletteData {
@@ -462,51 +480,41 @@ impl<V: Hash + Eq + Copy + Default, const DIM: usize> PalettedContainer<V, DIM> 
             }));
         }
 
-        let mut decompressed_values = Vec::with_capacity(Self::VOLUME);
-
-        let mut packed_data_iter = packed_data.iter();
-        let mut current_packed_word = *packed_data_iter.next().unwrap_or(&0);
-
-        for i in 0..Self::VOLUME {
-            let bit_index_in_word = i % keys_per_i64 as usize;
-
-            if bit_index_in_word == 0 && i > 0 {
-                current_packed_word = *packed_data_iter.next().unwrap_or(&0);
-            }
-
-            let lookup_index = (current_packed_word as u64
-                >> (bit_index_in_word as u64 * bits_per_key as u64))
-                & index_mask;
-
-            let value = palette
-                .get(lookup_index as usize)
-                .copied()
-                .unwrap_or_else(|| {
-                    warn!("Lookup index out of bounds! Defaulting...");
-                    V::default()
-                });
-
-            decompressed_values.push(value);
-        }
-
-        // Now, with all decompressed values, build the counts.
+        // Each key counts toward the first palette entry with its value, as a lookup by value
+        // would; an out-of-bounds key reads as the default value.
+        let mut first_index = HashMap::with_capacity(palette.len());
+        let first_of: Vec<usize> = palette
+            .iter()
+            .enumerate()
+            .map(|(index, value)| *first_index.entry(*value).or_insert(index))
+            .collect();
+        let default_index = first_index.get(&V::default()).copied();
         let mut counts = vec![0; palette.len()];
-
-        for &value in &decompressed_values {
-            // This is the key optimization: find the index in the palette Vec
-            // and increment the corresponding count.
-            if let Some(index) = palette.iter().position(|v| v == &value) {
-                counts[index] += 1;
-            } else {
-                // This case should ideally not happen if the palette is complete.
-                warn!("Decompressed value not found in palette!");
-            }
-        }
+        let (mut out_of_bounds, mut uncounted) = (0, 0);
 
         let mut cube = Box::new([[[V::default(); DIM]; DIM]; DIM]);
-        cube.as_flattened_mut()
-            .as_flattened_mut()
-            .copy_from_slice(&decompressed_values);
+        keys.unpack_into(
+            cube.as_flattened_mut().as_flattened_mut(),
+            |value_out, idx| {
+                let counted = palette.get(idx).map_or_else(
+                    || {
+                        out_of_bounds += 1;
+                        default_index
+                    },
+                    |value| {
+                        *value_out = *value;
+                        Some(first_of[idx])
+                    },
+                );
+                counted.map_or_else(|| uncounted += 1, |index| counts[index] += 1);
+            },
+        );
+        if out_of_bounds > 0 {
+            warn!("{out_of_bounds} lookup indices out of bounds! Defaulting...");
+        }
+        if uncounted > 0 {
+            warn!("{uncounted} decompressed values not found in palette!");
+        }
 
         Self::Heterogeneous(Box::new(HeterogeneousPaletteData {
             storage: PaletteStorage::Dense(cube),
@@ -1426,6 +1434,23 @@ mod tests {
             Block::LAVA.default_state.id,
         ];
         assert_bulk_matches_mutations(|x, y, z| states[(x + y + z) % states.len()]);
+    }
+
+    #[test]
+    fn anvil_round_trip_keeps_every_block_at_every_key_width() {
+        // 4 to 9 bits per key: 5, 6 and 7 leave unused bits in each long, 300 states are dense.
+        for len in [5, 17, 40, 100, 200, 300] {
+            let states: Vec<BlockStateId> =
+                (1..=len as u16).map(BlockStateId::new_or_air).collect();
+            let section = BlockPalette::from_fn(|x, y, z| states[(x * 7 + y * 31 + z * 131) % len]);
+            let decoded = BlockPalette::from_disk_nbt(section.to_disk_nbt());
+            assert_eq!(
+                section.iter().collect::<Vec<_>>(),
+                decoded.iter().collect::<Vec<_>>(),
+                "{len} states"
+            );
+            assert_eq!(section.non_air_block_count(), decoded.non_air_block_count());
+        }
     }
 
     #[test]

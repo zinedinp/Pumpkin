@@ -1,4 +1,6 @@
 use std::fs;
+
+use super::is_real_dir;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::error;
@@ -23,7 +25,7 @@ fn visit_structure_dir(dir: &Path, namespace: &str, prefix: &str, count: &mut us
             continue;
         };
 
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             let next_prefix = if prefix.is_empty() {
                 file_name
             } else {
@@ -86,7 +88,7 @@ fn visit_template_pool_dir(dir: &Path, namespace: &str, prefix: &str, count: &mu
             continue;
         };
 
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             let next_prefix = if prefix.is_empty() {
                 file_name
             } else {
@@ -157,7 +159,7 @@ fn visit_processor_list_dir(dir: &Path, namespace: &str, prefix: &str, count: &m
             continue;
         };
 
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             let next_prefix = if prefix.is_empty() {
                 file_name
             } else {
@@ -253,6 +255,21 @@ mod tests {
         let pool = discovered.unwrap();
         assert_eq!(pool.elements.len(), 1);
         assert_eq!(pool.elements[0].weight, 10);
+
+        clear_dynamic_worldgen_data();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn structure_walk_does_not_follow_a_link_back_up() {
+        let dir = tempdir().unwrap();
+        let structure_dir = dir.path().join("structure");
+        let nested = structure_dir.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("piece.nbt"), [0u8]).unwrap();
+        std::os::unix::fs::symlink(&structure_dir, nested.join("loop")).unwrap();
+
+        assert_eq!(load_structures_from_dir("link_test", &structure_dir), 1);
 
         clear_dynamic_worldgen_data();
     }

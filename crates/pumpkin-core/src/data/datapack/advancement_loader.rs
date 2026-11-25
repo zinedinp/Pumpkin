@@ -2,6 +2,8 @@ use crate::entity::player::advancement::predicate::CriterionConditions;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
+
+use super::is_real_dir;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::warn;
@@ -39,7 +41,7 @@ fn load_advancements_recursive<S: std::hash::BuildHasher>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_advancements_recursive(namespace, base_dir, &path, registry);
         } else if path
             .extension()

@@ -83,6 +83,10 @@ harness = false
 name = "template_pool"
 harness = false
 
+[[bench]]
+name = "palette"
+harness = false
+
 
 [lints]
 workspace = true

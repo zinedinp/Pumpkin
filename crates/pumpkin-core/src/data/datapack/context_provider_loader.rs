@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+
+use super::is_real_dir;
 use std::path::Path;
 
 use pumpkin_nbt::compound::NbtCompound;
@@ -101,7 +103,7 @@ fn load_context_providers_recursive(
     for entry in entries.flatten() {
         let path = entry.path();
 
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_context_providers_recursive(namespace, base_dir, &path, registry);
         } else if path
             .extension()

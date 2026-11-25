@@ -1642,6 +1642,13 @@ fn load_bundled_datapacks(
     }
 }
 
+/// Whether `entry` is a directory itself rather than a link to one. Vanilla's
+/// `PathPackResources.listPath` doesn't follow links inside a pack, so a link back up the tree
+/// can't make a walk recurse without end.
+pub(crate) fn is_real_dir(entry: &fs::DirEntry) -> bool {
+    entry.file_type().is_ok_and(|kind| kind.is_dir())
+}
+
 fn scan_datapacks_dir(
     datapacks_dir: &Path,
     enabled_packs: &[String],
@@ -2083,7 +2090,7 @@ fn load_recipes_recursive(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_recipes_recursive(namespace, base_dir, &path, all_recipes, count);
         } else if path
             .extension()

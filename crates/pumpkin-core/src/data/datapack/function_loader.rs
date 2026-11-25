@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+
+use super::is_real_dir;
 use std::path::Path;
 
 pub fn load_functions_from_dir<S: std::hash::BuildHasher>(
@@ -24,7 +26,7 @@ fn load_functions_recursive<S: std::hash::BuildHasher>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_functions_recursive(namespace, base_dir, &path, functions);
         } else if path
             .extension()
@@ -76,7 +78,7 @@ fn load_tags_recursive<S: std::hash::BuildHasher>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_tags_recursive(namespace, base_dir, &path, tags);
         } else if path
             .extension()

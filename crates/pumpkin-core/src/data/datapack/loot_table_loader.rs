@@ -2,6 +2,8 @@ use pumpkin_util::loot_table::DynamicLootTable;
 use pumpkin_util::loot_table::parser::parse_loot_table_with_predicates;
 use std::{collections::HashMap, fs, path::Path, sync::Arc};
 
+use super::is_real_dir;
+
 #[must_use]
 pub fn parse_loot_table(json: &str) -> Option<DynamicLootTable> {
     parse_loot_table_with_predicates(json, &|name| {
@@ -34,7 +36,7 @@ fn load_loot_tables_recursive<S: std::hash::BuildHasher>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_loot_tables_recursive(namespace, base_dir, &path, registry);
         } else if path
             .extension()

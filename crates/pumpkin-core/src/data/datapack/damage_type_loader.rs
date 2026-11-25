@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
+
+use super::is_real_dir;
 use std::path::Path;
 
 use pumpkin_data::damage::{DamageEffects, DamageScaling, DamageType, DeathMessageType};
@@ -208,7 +210,7 @@ fn load_damage_types_recursive<S: std::hash::BuildHasher>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if is_real_dir(&entry) {
             load_damage_types_recursive(namespace, base_dir, &path, registry);
         } else if path
             .extension()
