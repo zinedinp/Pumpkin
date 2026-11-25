@@ -92,6 +92,7 @@ impl AbstractMinecart {
         self.on_rails.store(rail.is_some(), Ordering::Relaxed);
         if let Some(rail) = rail {
             self.move_along_track_old(caller, &world, rail);
+            // The rail from before the move (MC-117477).
             if rail.block == &Block::ACTIVATOR_RAIL {
                 self.activate(PoweredRailLikeProperties::from_state_id(rail.state).powered);
             }
@@ -266,7 +267,8 @@ impl AbstractMinecart {
         entity.yaw.store(yaw % 360.0);
     }
 
-    /// Vanilla `OldMinecartBehavior.pushAndPickupEntities`.
+    /// Vanilla `OldMinecartBehavior.pushAndPickupEntities`. Fast carts often miss pickups
+    /// (MC-92165).
     fn push_and_pickup_entities_old(&self, caller: &dyn EntityBase, world: &World) {
         let entity = &self.vehicle.entity;
         let hitbox = entity

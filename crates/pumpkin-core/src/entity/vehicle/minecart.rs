@@ -98,7 +98,8 @@ impl MinecartType {
             .find(|kind| kind.entity_type().id == entity_type.id)
     }
 
-    /// The item that places this cart, `None` for the spawner cart.
+    /// The item that places this cart, `None` for the spawner cart, which has no item
+    /// (MC-163800).
     #[must_use]
     pub const fn item(self) -> Option<&'static Item> {
         match self {
@@ -431,7 +432,7 @@ impl AbstractMinecart {
     }
 
     /// Vanilla `AbstractMinecartContainer.remove` with a destroying reason: a container cart
-    /// spills its items, whatever `doEntityDrops` says.
+    /// spills its items, whatever `doEntityDrops` says (MC-312690).
     fn spill_contents(&self) {
         let Some(container) = self.container() else {
             return;
@@ -595,15 +596,8 @@ impl EntityBase for AbstractMinecart {
             MinecartBehavior::Old => self.tick_old(caller, last_yaw),
             MinecartBehavior::New(behavior) => self.tick_new(caller, behavior),
         }
+        // Lava's ignite, hurt and fall distance halving run in `update_fluid_state`.
         entity.update_fluid_state(caller);
-        // Lava's ignite and hurt run in `update_fluid_state`.
-        if !entity.first_tick.load(Ordering::Relaxed)
-            && entity.touching_lava.load(Ordering::Relaxed)
-        {
-            entity
-                .fall_distance
-                .store(entity.fall_distance.load() * 0.5);
-        }
         entity.first_tick.store(false, Ordering::Relaxed);
 
         if entity.is_removed() {
@@ -625,6 +619,7 @@ impl EntityBase for AbstractMinecart {
             let power = fall_distance / 10.0;
             minecart.explode(caller, power * power, None);
         }
+        // Passengers take the fall too, even when the cart lands off the rails (MC-275743).
         self.vehicle
             .entity
             .cause_fall_damage(fall_distance, damage_modifier)
@@ -742,7 +737,8 @@ impl EntityBase for AbstractMinecart {
             return false;
         }
         // Vanilla `MinecartTNT.hurtServer`: a burning arrow sets the cart off even before the
-        // invulnerability check.
+        // invulnerability check. Only arrows do (MC-119000), whatever `mobGriefing` says
+        // (MC-312790), and the arrow's speed powers the blast (MC-312963).
         if let MinecartKind::Tnt(minecart) = &self.kind
             && let Some(arrow) = source.filter(|source| {
                 is_abstract_arrow(source.get_entity().entity_type)
@@ -771,6 +767,7 @@ impl EntityBase for AbstractMinecart {
         if self.vehicle.hurt(amount, cause, should_source_destroy) {
             self.destroy(&damage_type, source);
         } else if creative_attacker(cause) && self.vehicle.destroy_event_allows(source) {
+            // A creative player's projectile discards the cart too (MC-21098).
             self.discard();
         }
         true
@@ -796,6 +793,7 @@ impl EntityBase for AbstractMinecart {
                 true
             }
             MinecartKind::Rideable(_) => RideableMinecart::interact(entity, player),
+            // Flint and steel can't light a TNT cart (MC-108558).
             MinecartKind::Spawner(_) | MinecartKind::Tnt(_) => false,
         }
     }

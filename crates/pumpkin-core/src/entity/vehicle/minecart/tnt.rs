@@ -88,6 +88,7 @@ impl TntMinecart {
             );
         }
 
+        // This sometimes sets carts off in corners (MC-7464).
         if entity.horizontal_collision.load(Ordering::Relaxed) {
             let speed_squared = entity.velocity.load().horizontal_length_squared();
             if speed_squared >= IGNITE_SPEED_SQUARED {

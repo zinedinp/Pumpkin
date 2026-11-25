@@ -52,7 +52,7 @@ impl FurnaceMinecart {
         if push.length_squared() <= 1.0e-7 {
             return velocity.multiply(0.98, 0.0, 0.98);
         }
-        // `calculateNewPushAlong`
+        // `calculateNewPushAlong`: a push across the track projects to zero (MC-304084).
         let push = if push.horizontal_length_squared() > 1.0e-4
             && velocity.horizontal_length_squared() > 0.001
         {
@@ -70,7 +70,8 @@ impl FurnaceMinecart {
         }
     }
 
-    /// Vanilla `MinecartFurnace.interact` + `addFuel`.
+    /// Vanilla `MinecartFurnace.interact` + `addFuel`: only fueling turns the cart, other
+    /// items don't (MC-304078).
     pub(super) fn interact(
         &self,
         entity: &Entity,

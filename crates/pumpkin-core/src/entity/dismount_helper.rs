@@ -160,14 +160,19 @@ fn passenger_fits(world: &World, passenger: &dyn EntityBase, bounding_box: Bound
         && can_dismount_to(world, &bounding_box)
 }
 
+/// Vanilla `passenger.setPose(pose)`: `false` when a plugin keeps the old pose, which the
+/// chosen spot wasn't checked for.
+fn take_pose(passenger: &dyn EntityBase, pose: EntityPose) -> bool {
+    let entity = passenger.get_entity();
+    entity.set_pose(pose);
+    entity.pose.load() == pose
+}
+
 /// The first dismount pose of `passenger` that fits at `location`, which it then takes.
 fn dismount_pose_fits(world: &World, passenger: &dyn EntityBase, location: Vector3<f64>) -> bool {
     dismount_poses(passenger).iter().any(|&pose| {
-        let fits = passenger_fits(world, passenger, pose_box(passenger, pose, location));
-        if fits {
-            passenger.get_entity().set_pose(pose);
-        }
-        fits
+        passenger_fits(world, passenger, pose_box(passenger, pose, location))
+            && take_pose(passenger, pose)
     })
 }
 
@@ -238,8 +243,9 @@ pub fn animal_dismount_location(vehicle: &Entity, passenger: &dyn EntityBase) ->
                 continue;
             }
             let location = up_from_bottom_center(target, floor);
-            if passenger_fits(&world, passenger, pose_box(passenger, pose, location)) {
-                passenger.get_entity().set_pose(pose);
+            if passenger_fits(&world, passenger, pose_box(passenger, pose, location))
+                && take_pose(passenger, pose)
+            {
                 return location;
             }
         }
@@ -271,7 +277,8 @@ fn ceiling_from(world: &World, pos: BlockPos, blocks: i32) -> f64 {
 }
 
 /// Vanilla `AbstractMinecart.getDismountLocationForPassenger`: beside the cart, across its
-/// `forward` motion, else on top in the first pose that fits under the ceiling.
+/// `forward` motion, else on top in the first pose that fits under the ceiling. A diagonal
+/// spot can be past a wall (MC-265604).
 pub fn minecart_dismount_location(
     vehicle: &Entity,
     forward: BlockDirection,
@@ -295,8 +302,7 @@ pub fn minecart_dismount_location(
                     location.add_raw(-reach, 0.0, -reach),
                     location.add_raw(reach, f64::from(dimensions.height), reach),
                 );
-                if passenger_fits(&world, passenger, reach_box) {
-                    passenger.get_entity().set_pose(pose);
+                if passenger_fits(&world, passenger, reach_box) && take_pose(passenger, pose) {
                     return location;
                 }
             }
@@ -308,8 +314,9 @@ pub fn minecart_dismount_location(
     for &pose in dismount_poses(passenger) {
         let height = f64::from(passenger.get_entity().get_dimensions(pose).height);
         let coverage = (vehicle_top_y - f64::from(target.0.y) + height).ceil() as i32;
-        if vehicle_top_y + height <= ceiling_from(&world, target, coverage) {
-            passenger.get_entity().set_pose(pose);
+        if vehicle_top_y + height <= ceiling_from(&world, target, coverage)
+            && take_pose(passenger, pose)
+        {
             break;
         }
     }
@@ -340,8 +347,9 @@ pub fn boat_dismount_location(vehicle: &Entity, passenger: &dyn EntityBase) -> V
             .collect();
         for &pose in dismount_poses(passenger) {
             for &location in &targets {
-                if passenger_fits(&world, passenger, pose_box(passenger, pose, location)) {
-                    passenger.get_entity().set_pose(pose);
+                if passenger_fits(&world, passenger, pose_box(passenger, pose, location))
+                    && take_pose(passenger, pose)
+                {
                     return location;
                 }
             }
@@ -411,8 +419,9 @@ fn horse_dismount_in_direction(
             }
             if is_block_floor_valid(floor) {
                 let location = Vector3::new(x, y, z);
-                if passenger_fits(&world, passenger, pose_box(passenger, pose, location)) {
-                    passenger.get_entity().set_pose(pose);
+                if passenger_fits(&world, passenger, pose_box(passenger, pose, location))
+                    && take_pose(passenger, pose)
+                {
                     return Some(location);
                 }
             }

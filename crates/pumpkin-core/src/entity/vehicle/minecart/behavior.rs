@@ -156,7 +156,9 @@ pub(super) fn pushable_by(own_id: i32, own_team: Option<&Team>, other: &dyn Enti
         && is_allowed_by_team_rules(own_team, other.get_team().as_ref())
 }
 
-/// The entities a rideable cart picks up instead of pushing.
+/// The entities a rideable cart picks up instead of pushing: boats too (MC-113871) and mobs
+/// without AI (MC-192836). [`pushable_by`] comes first and leaves out armor stands
+/// (MC-90923).
 pub(super) fn can_be_picked_up(other: &dyn EntityBase) -> bool {
     other.get_player().is_none()
         && other.get_entity().entity_type != &EntityType::IRON_GOLEM
@@ -267,6 +269,10 @@ impl AbstractMinecart {
     ) -> bool {
         let rider = passenger.get_entity();
         if rider.is_sneaking() || rider.riding_cooldown.load(Ordering::Relaxed) > 0 {
+            return false;
+        }
+        // Vanilla refuses a mount that would make a riding loop.
+        if entity.rides_through(rider.entity_id) {
             return false;
         }
         let Some(vehicle) = world.get_entity_by_id(entity.entity_id) else {

@@ -14,7 +14,8 @@ use pumpkin_data::item_stack::ItemStack;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
-/// Vanilla `MinecartItem`.
+/// Vanilla `MinecartItem`. Anyone can place a command block cart, survival players and
+/// dispensers too (MC-159191).
 pub struct MinecartItem;
 
 /// Extra spawn height on a slope.

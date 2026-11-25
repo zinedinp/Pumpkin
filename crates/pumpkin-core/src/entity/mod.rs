@@ -3098,7 +3098,8 @@ impl Entity {
 
         let in_lava = in_fluid[1];
 
-        if in_lava {
+        // Vanilla halves it once per tick through `isInLava`, which skips the first tick.
+        if in_lava && !self.first_tick.load(Ordering::Relaxed) {
             self.fall_distance.store(self.fall_distance.load() / 2.0);
         }
 
@@ -5521,6 +5522,19 @@ impl Entity {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
             .and_then(Weak::upgrade)
+    }
+
+    /// Whether the entity `entity_id` is this entity's vehicle, or that vehicle's, and so on.
+    #[must_use]
+    pub fn rides_through(&self, entity_id: i32) -> bool {
+        let mut current = self.get_vehicle();
+        while let Some(vehicle) = current {
+            if vehicle.get_entity().entity_id == entity_id {
+                return true;
+            }
+            current = vehicle.get_entity().get_vehicle();
+        }
+        false
     }
 
     /// Vanilla `getRootVehicle`, `None` when not riding.
