@@ -39,15 +39,16 @@ pub struct NetherNetListener {
 }
 
 impl NetherNetListener {
+    /// Serves the signaling over TCP at `address`; `ice_socket` carries the UDP.
     pub async fn bind(
         server: &Arc<Server>,
+        address: SocketAddr,
         identity_key: Arc<SigningKey>,
         oidc_verifier: Option<Arc<OnceCell<(String, Jwks)>>>,
         ice_socket: IceSocket,
         stop: CancellationToken,
     ) -> std::io::Result<Self> {
         let config = &server.advanced_config.networking.bedrock.nethernet;
-        let address = config.address;
         let listener = TcpListener::bind(address).await?;
         let local_addr = listener.local_addr()?;
         let ice_router = Arc::new(

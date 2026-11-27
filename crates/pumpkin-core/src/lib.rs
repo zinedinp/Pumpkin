@@ -490,6 +490,7 @@ impl PumpkinServer {
             .then(|| server.bedrock_oidc_keys.clone());
         match NetherNetListener::bind(
             server,
+            config.nethernet.address,
             identity_key,
             oidc_verifier,
             ice_socket,
@@ -843,22 +844,24 @@ fn spawn_bedrock_client_task(
 
 /// Opens an embedded server to Bedrock clients until `stop` is cancelled.
 ///
-/// Vanilla's LAN publish, at the config's `NetherNet` address. Xbox sign-in
-/// follows [`server::host::Host::online_mode`]. Returns once the listener is
+/// Vanilla's LAN publish, at `address` for both `NetherNet`'s TCP signaling and its UDP.
+/// Xbox sign-in follows [`server::host::Host::online_mode`]. Returns once the listener is
 /// up, or why it could not bind.
 pub async fn listen_bedrock(
     server: Arc<Server>,
+    address: SocketAddr,
     stop: CancellationToken,
     tasks: Arc<TaskTracker>,
 ) -> std::io::Result<()> {
     let config = &server.advanced_config.networking.bedrock;
-    let ice_socket = IceSocket::bind(config.nethernet.address).await?;
+    let ice_socket = IceSocket::bind(address).await?;
     let identity_key = load_or_create_identity_key(&config.nethernet.identity_key)?;
     let oidc_verifier = (server.host.online_mode(config.online_mode)
         && config.authentication.enabled)
         .then(|| server.bedrock_oidc_keys.clone());
     let listener = NetherNetListener::bind(
         &server,
+        address,
         identity_key,
         oidc_verifier,
         ice_socket,
