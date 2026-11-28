@@ -5,6 +5,7 @@ pub mod client_vehicle_move;
 pub mod custom_movement;
 pub mod move_check;
 mod shoulders;
+pub mod simulated_player;
 pub mod statistics;
 
 pub use client_move::{ClientMove, ClientMoveOutcome};
@@ -964,6 +965,7 @@ impl Player {
         let supports_player_loaded = match client.as_ref() {
             ClientPlatform::Java(client) => client.version.load() >= JavaMinecraftVersion::V_1_21_4,
             ClientPlatform::Bedrock(_) => true,
+            ClientPlatform::SimulatedPlayer(_) => false,
         };
         let initially_loaded = !supports_player_loaded;
 
@@ -1096,6 +1098,26 @@ impl Player {
             post_effects: std::sync::Mutex::new(Vec::new()),
             inbound_packets: SegQueue::new(),
         }
+    }
+
+    pub fn look_at_entity(&self, entity_id: i32) -> Result<(), &'static str> {
+        let target = self
+            .world()
+            .get_entity_by_id(entity_id)
+            .ok_or("Entity not found")?;
+        let entity = self.get_entity();
+        let delta = target.get_eye_pos() - entity.get_eye_pos();
+        let yaw = (delta.z.atan2(delta.x) - std::f64::consts::FRAC_PI_2).to_degrees() as f32;
+        let pitch = -delta.y.atan2(delta.x.hypot(delta.z)).to_degrees() as f32;
+        self.apply_and_broadcast_look(ClientMove {
+            position: None,
+            yaw: Some(yaw),
+            pitch: Some(pitch),
+            head_yaw: Some(yaw),
+            on_ground: entity.on_ground.load(Ordering::Relaxed),
+            horizontal_collision: false,
+        });
+        Ok(())
     }
 
     #[must_use]
@@ -1310,19 +1332,32 @@ impl Player {
                 actions: &[PlayerAction::UpdateListed(listed)],
             }],
         ));
+        if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_)) {
+            world.broadcast_simulated_player_tab_list_visibility(self);
+        }
     }
 
-    /// Spawns a task associated with this player-client. All tasks spawned with this method are awaited
-    /// when the client. This means tasks should complete in a reasonable amount of time or select
-    /// on `Self::await_close_interrupt` to cancel the task when the client is closed
-    ///
-    /// Returns an `Option<JoinHandle<F::Output>>`. If the client is closed, this returns `None`.
+    /// Spawns a player task on the client runtime, or on the server runtime for a simulated player.
+    /// Client tasks are tracked until disconnect. Simulated player tasks are tracked until server
+    /// shutdown, so they must finish on their own. Returns `None` if the client is closed or the
+    /// simulated player's server is unavailable.
     pub fn spawn_task<F>(&self, task: F) -> Option<JoinHandle<F::Output>>
     where
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.client.spawn_task(task)
+        if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_)) {
+            let Some(server) = self.world().server.upgrade() else {
+                warn!(
+                    "Cannot spawn a task for simulated player {} without a server",
+                    self.gameprofile.name
+                );
+                return None;
+            };
+            Some(server.spawn_task(task))
+        } else {
+            self.client.spawn_task(task)
+        }
     }
 
     /// Pairs tracked entities in chunks that were just queued for a player.
@@ -1356,10 +1391,20 @@ impl Player {
                 skin: (**self.bedrock_skin.load()).clone(),
                 is_teacher: false,
                 is_host: false,
-                is_sub_client: false,
+                is_sub_client: self.client.bedrock().is_some_and(|c| c.is_sub_client()),
                 player_color: [0; 4],
             }],
         }
+    }
+
+    /// Returns a Bedrock player-list update matching this player's tab visibility.
+    #[must_use]
+    pub fn bedrock_tab_list_update(&self) -> CPlayerList {
+        let mut packet = self.bedrock_player_list();
+        if !self.tab_list_listed.load(Ordering::Relaxed) {
+            packet.action = CPlayerList::ACTION_REMOVE;
+        }
+        packet
     }
 
     /// Bedrock remote-player spawn -> the `PlayerList` entry must precede `AddPlayer`.
@@ -1462,6 +1507,10 @@ impl Player {
             .increment_custom(statistics::CustomStatistic::LeaveGame, 1);
         let world = self.world();
         world.remove_player(self, true).await;
+
+        if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_)) {
+            return;
+        }
 
         let cylindrical = self.watched_section.load();
         self.clean_up_chunk_tickets(&world.level);
@@ -1744,16 +1793,17 @@ impl Player {
         }
 
         let old_movement = victim_entity.velocity.load();
+        let damage_type = if is_mace_smash {
+            DamageType::MACE_SMASH
+        } else {
+            item_stack
+                .get_data_component::<pumpkin_data::data_component_impl::DamageTypeImpl>()
+                .map_or(DamageType::PLAYER_ATTACK, |dt| dt.damage_type)
+        };
         if !victim.damage_with_context(
             victim.as_ref(),
             damage as f32,
-            if is_mace_smash {
-                DamageType::MACE_SMASH
-            } else {
-                item_stack
-                    .get_data_component::<pumpkin_data::data_component_impl::DamageTypeImpl>()
-                    .map_or(DamageType::PLAYER_ATTACK, |dt| dt.damage_type)
-            },
+            damage_type,
             None,
             Some(self),
             Some(self),
@@ -1795,7 +1845,12 @@ impl Player {
             mace_smash_knockback(&world, self, victim.as_ref());
         }
 
-        crate::enchantment::EnchantmentHelper::on_post_attack(self, victim_entity, &item_stack);
+        crate::enchantment::EnchantmentHelper::on_post_attack(
+            self,
+            victim.as_ref(),
+            &item_stack,
+            damage_type,
+        );
 
         if is_mace_smash_living {
             self.living_entity.fall_distance.store(0.0);
@@ -1972,6 +2027,8 @@ impl Player {
                     send_bedrock_inventory_slot(bedrock, target, &packet.item.0);
                 }
             }
+
+            ClientPlatform::SimulatedPlayer(_) => {}
         }
     }
 
@@ -2068,7 +2125,7 @@ impl Player {
                     original_item.registry_key.to_string(),
                     amount,
                 );
-            server.plugin_manager.fire_blocking(server, &mut event);
+            event = server.plugin_manager.fire_blocking(server, event);
             if event.cancelled {
                 return DamageResult::Untouched;
             }
@@ -2098,12 +2155,12 @@ impl Player {
         if result == DamageResult::Broken
             && let Some((server, player)) = player_context
         {
-            let mut event =
+            let event =
                 crate::plugin::api::events::player::player_item_break::PlayerItemBreakEvent::new(
                     player,
                     original_item.registry_key.to_string(),
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            server.plugin_manager.fire_blocking(&server, event);
         }
         result
     }
@@ -2236,7 +2293,7 @@ impl Player {
                     forced,
                     cancelled: false,
                 };
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return false;
             }
@@ -2648,8 +2705,7 @@ impl Player {
                 let block_pos = entity.block_pos.load();
                 let world = entity.world.load();
                 let (fluid, _) = world.get_fluid_and_fluid_state(&block_pos);
-                let is_water_block = fluid.id == pumpkin_data::fluid::Fluid::WATER.id
-                    || fluid.id == pumpkin_data::fluid::Fluid::FLOWING_WATER.id;
+                let is_water_block = fluid.matches_type(&pumpkin_data::fluid::Fluid::WATER);
 
                 entity.set_swimming(
                     is_sprinting && is_under_water && !is_passenger && is_water_block,
@@ -2733,11 +2789,10 @@ impl Player {
         if let Some(server) = world.server.upgrade()
             && let Some(player_arc) = world.get_player_by_uuid(self.gameprofile.id)
         {
-            let mut event =
-                crate::plugin::api::events::player::player_bed::PlayerBedLeaveEvent::new(
-                    player_arc, bed_pos,
-                );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            let event = crate::plugin::api::events::player::player_bed::PlayerBedLeaveEvent::new(
+                player_arc, bed_pos,
+            );
+            server.plugin_manager.fire_blocking(&server, event);
         }
 
         let (bed, bed_state) = world.get_block_and_state_id(&bed_pos);
@@ -2972,6 +3027,62 @@ impl Player {
         self.try_send_client_packet(&packet);
     }
 
+    /// Applies a client sign edit after checking the editor, reach, and wax state.
+    pub(crate) fn update_sign_text(
+        &self,
+        location: BlockPos,
+        is_front_text: bool,
+        lines: [&str; 4],
+    ) {
+        let world = self.world();
+        // Vanilla checks the chunk before looking up the block entity. The reusable
+        // `may_update_text` gate repeats this for the Bedrock path, which has no pre-check.
+        if !world.level.is_chunk_loaded(&location.chunk_position()) {
+            return;
+        }
+
+        let Some(block_entity) = world.get_block_entity(&location) else {
+            return;
+        };
+        let Some(sign_entity) =
+            crate::block::entities::sign::SignEntityRef::from_block_entity(&*block_entity)
+        else {
+            return;
+        };
+        if !sign_entity.may_update_text(&world, self) {
+            warn!(
+                "Player {} just tried to change non-editable sign",
+                self.gameprofile.name
+            );
+            return;
+        }
+
+        if let Some(player_arc) = world.get_player_by_uuid(self.gameprofile.id) {
+            let event = crate::plugin::api::events::block::sign_change::SignChangeEvent::new(
+                player_arc,
+                location,
+                lines.map(str::to_owned).into(),
+            );
+            let event = if let Some(server) = world.server.upgrade() {
+                server.plugin_manager.fire_blocking(&server, event)
+            } else {
+                event
+            };
+            if event.cancelled {
+                return;
+            }
+        }
+
+        sign_entity
+            .get_text(is_front_text)
+            .set_client_messages(&lines.map(Box::<str>::from));
+        *sign_entity
+            .currently_editing_player()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        world.update_block_entity(&block_entity);
+    }
+
     pub fn open_sign_editor(&self, location: BlockPos, is_front_text: bool) {
         if let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id)
             && let Some(server) = self.world().server.upgrade()
@@ -2983,7 +3094,7 @@ impl Player {
                     is_front: is_front_text,
                     cancelled: false,
                 };
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -3025,7 +3136,7 @@ impl Player {
             velocity,
             cancelled: false,
         };
-        server.plugin_manager.fire_blocking(&server, &mut event);
+        event = server.plugin_manager.fire_blocking(&server, event);
         (!event.cancelled).then_some(event.velocity)
     }
 
@@ -3117,7 +3228,7 @@ impl Player {
                     player_arc,
                     link_strings,
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -3144,6 +3255,9 @@ impl Player {
             return;
         }
 
+        if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_)) {
+            return;
+        }
         let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id) else {
             return;
         };
@@ -3189,9 +3303,7 @@ impl Player {
                             packet.id,
                             packet.payload.clone(),
                         );
-                        server_arc
-                            .plugin_manager
-                            .fire_blocking(&server_arc, &mut event);
+                        event = server_arc.plugin_manager.fire_blocking(&server_arc, event);
                         if !event.cancelled {
                             packet = RawPacket {
                                 id: event.packet_id,
@@ -3209,6 +3321,8 @@ impl Player {
                         tracing::error!("Failed to handle Bedrock play packet: {err}");
                     }
                 }
+
+                ClientPlatform::SimulatedPlayer(_) => {}
             }
 
             count += 1;
@@ -3324,12 +3438,17 @@ impl Player {
         let version = match self.client.as_ref() {
             ClientPlatform::Java(java_client) => java_client.version.load(),
             ClientPlatform::Bedrock(_) => JavaMinecraftVersion::V_1_20_2,
+            ClientPlatform::SimulatedPlayer(_) => JavaMinecraftVersion::Unknown,
         };
 
         let view_distance = self.watched_section.load().view_distance;
-        let prepared_batch = self.chunk_sender.try_lock().ok().and_then(|mut sender| {
-            sender.prepare_batch(&world.level, player_chunk, view_distance, epoch, version)
-        });
+        let prepared_batch = if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_)) {
+            None
+        } else {
+            self.chunk_sender.try_lock().ok().and_then(|mut sender| {
+                sender.prepare_batch(&world.level, player_chunk, view_distance, epoch, version)
+            })
+        };
 
         if let Some(batch) = prepared_batch {
             match self.client.as_ref() {
@@ -3393,6 +3512,7 @@ impl Player {
                         });
                     }
                 }
+                ClientPlatform::SimulatedPlayer(_) => {}
             }
         }
 
@@ -3708,7 +3828,7 @@ impl Player {
                 entity.entity_id,
                 true,
             );
-        server.plugin_manager.fire_blocking(server, &mut event);
+        event = server.plugin_manager.fire_blocking(server, event);
         if event.cancelled || !event.is_gliding {
             return false;
         }
@@ -3726,7 +3846,7 @@ impl Player {
                 self.entity_id(),
                 false,
             );
-        server.plugin_manager.fire_blocking(&server, &mut event);
+        event = server.plugin_manager.fire_blocking(&server, event);
         !event.cancelled && !event.is_gliding
     }
 
@@ -3869,6 +3989,7 @@ impl Player {
         match self.client.as_ref() {
             ClientPlatform::Java(client) => client.version.load() >= JavaMinecraftVersion::V_1_21_4,
             ClientPlatform::Bedrock(_) => true,
+            ClientPlatform::SimulatedPlayer(_) => false,
         }
     }
 
@@ -3947,7 +4068,7 @@ impl Player {
         if let Some(server) = server {
             let mut event =
                 PacketSentEvent::new(self.clone(), packet_id, payload, Arc::new(packet));
-            server.plugin_manager.fire(&server, &mut event).await;
+            event = server.plugin_manager.fire(&server, event).await;
             return event.cancelled;
         }
         false
@@ -3960,7 +4081,7 @@ impl Player {
     ) -> PacketSentEvent {
         let mut event = PacketSentEvent::new_raw(self.clone(), packet_id, payload);
         if let Some(server) = self.world().server.upgrade() {
-            server.plugin_manager.fire(&server, &mut event).await;
+            event = server.plugin_manager.fire(&server, event).await;
         }
         event
     }
@@ -4140,6 +4261,8 @@ impl Player {
                     bedrock.try_enqueue_packet(data);
                 }
             }
+
+            ClientPlatform::SimulatedPlayer(_) => {}
         }
     }
 
@@ -4183,7 +4306,7 @@ impl Player {
                 amount,
                 cancelled: false,
             };
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -4992,6 +5115,8 @@ impl Player {
                         }
                         self.bedrock_spawned.store(false, Ordering::Relaxed);
                     }
+
+                    ClientPlatform::SimulatedPlayer(_) => {}
                 }
 
                 self.send_permission_lvl_update();
@@ -5019,13 +5144,13 @@ impl Player {
 
                 player.request_teleport(position, yaw, pitch);
 
-                let mut changed_world_event = crate::plugin::api::events::player::player_changed_world::PlayerChangedWorldEvent {
+                let changed_world_event = crate::plugin::api::events::player::player_changed_world::PlayerChangedWorldEvent {
                     player: player.clone(),
                     from_world: current_world,
                     to_world: new_world,
                     cancelled: false,
                 };
-                server.plugin_manager.fire(&server, &mut changed_world_event).await;
+                server.plugin_manager.fire(&server, changed_world_event).await;
             }
         }}
     }
@@ -5047,7 +5172,7 @@ impl Player {
                 to: position,
                 cancelled: false,
             };
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -5087,6 +5212,12 @@ impl Player {
             }
             ClientPlatform::Bedrock(client) => {
                 self.send_bedrock_teleport(client);
+            }
+            ClientPlatform::SimulatedPlayer(_) => {
+                *self
+                    .awaiting_teleport
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             }
         }
     }
@@ -5234,7 +5365,7 @@ impl Player {
 
         let mut event = PlayerTransferEvent::new(self.clone(), host.to_owned(), port);
         let server = self.world().server.upgrade()?;
-        server.plugin_manager.fire_blocking(&server, &mut event);
+        event = server.plugin_manager.fire_blocking(&server, event);
         if event.cancelled {
             return None;
         }
@@ -5260,11 +5391,21 @@ impl Player {
             && let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id)
         {
             let mut event = crate::plugin::api::events::player::player_kick::PlayerKickEvent::new(
-                player_arc,
+                player_arc.clone(),
                 message.clone().to_pretty_console(),
             );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
+                return;
+            }
+            if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_)) {
+                let server_clone = server.clone();
+                server.spawn_task(async move {
+                    if let Err(error) = server_clone.disconnect_simulated_player(&player_arc).await
+                    {
+                        warn!("{error}");
+                    }
+                });
                 return;
             }
         }
@@ -5347,9 +5488,9 @@ impl Player {
                 exhaustion,
             );
         if let Some(server) = self.world().server.upgrade() {
-            server
+            exhaustion_event = server
                 .plugin_manager
-                .fire_blocking(&server, &mut exhaustion_event);
+                .fire_blocking(&server, exhaustion_event);
         }
         if exhaustion_event.cancelled {
             return;
@@ -5588,9 +5729,7 @@ impl Player {
                 food_level,
             );
         if let Some(server) = self.world().server.upgrade() {
-            server
-                .plugin_manager
-                .fire_blocking(&server, &mut food_event);
+            food_event = server.plugin_manager.fire_blocking(&server, food_event);
         }
         if food_event.cancelled {
             return;
@@ -5760,12 +5899,18 @@ impl Player {
         kick_matching_players: bool,
         log_to_console: bool,
     ) {
+        let Some(target_ip) = self.client.remote_ip() else {
+            warn!(
+                "Simulated player {} has no IP address to ban",
+                self.gameprofile.name
+            );
+            return;
+        };
         let string_reason = reason.clone().map_or_else(
             || "Banned by an operator.".to_string(),
             pumpkin_util::text::TextComponent::get_text,
         );
         let source_str = source.unwrap_or_else(|| "Plugin".to_string());
-        let target_ip = self.client.address().ip();
 
         if log_to_console {
             tracing::info!(
@@ -5909,7 +6054,7 @@ impl Player {
             previous_gamemode: self.gamemode.load(),
             cancelled: false,
         };
-        server.plugin_manager.fire_blocking(&server, &mut event);
+        event = server.plugin_manager.fire_blocking(&server, event);
         if event.cancelled {
             return false;
         }
@@ -6268,7 +6413,7 @@ impl Player {
                     dropped_stack.item.registry_key.to_string(),
                     dropped_stack.item_count,
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -6300,7 +6445,7 @@ impl Player {
             && let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id)
         {
             let mut event = crate::plugin::api::events::player::player_swap_hands::PlayerSwapHandItemsEvent::new(player_arc);
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -6565,12 +6710,12 @@ impl Player {
             && let Some(server) = self.world().server.upgrade()
             && let Some(player_arc) = self.world().get_player_by_uuid(self.gameprofile.id)
         {
-            let mut event = crate::plugin::api::events::player::player_level_change::PlayerLevelChangeEvent::new(
+            let event = crate::plugin::api::events::player::player_level_change::PlayerLevelChangeEvent::new(
                 player_arc,
                 old_level,
                 level,
             );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            server.plugin_manager.fire_blocking(&server, event);
         }
         // TODO: These should be atomic together, not isolated; make a struct containing these. can cause ABA issues
         self.experience_level.store(level, Ordering::Relaxed);
@@ -6578,14 +6723,6 @@ impl Player {
         self.experience_points.store(points, Ordering::Relaxed);
         self.last_sent_xp.store(-1, Ordering::Relaxed);
         self.tick_experience();
-
-        if self.has_client_loaded() {
-            self.try_send_client_packet(&CSetExperience::new(
-                progress.clamp(0.0, 1.0),
-                level.into(),
-                points.into(),
-            ));
-        }
     }
 
     /// Sets the player's experience level directly.
@@ -6611,9 +6748,11 @@ impl Player {
 
     pub fn add_effect(&self, effect: Effect) {
         self.living_entity.add_effect(effect);
-        self.trigger_advancement(
-            crate::entity::player::advancement::trigger::AdvancementTrigger::EffectsChanged,
-        );
+    }
+
+    pub fn add_effect_with_source(&self, effect: Effect, source: &dyn EntityBase) {
+        self.living_entity
+            .add_effect_with_source(effect, Some(source));
     }
 
     pub fn has_effect(&self, effect_type: &'static StatusEffect) -> bool {
@@ -6778,7 +6917,7 @@ impl Player {
         let server = self.world().server.upgrade();
         if let Some(server) = server {
             let mut event = PlayerExpChangeEvent::new(self.clone(), added_points);
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             added_points = event.amount;
         }
 
@@ -6845,7 +6984,7 @@ impl Player {
                     exp_consumed: xp_used,
                     cancelled: false,
                 };
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return xp;
             }
@@ -6930,12 +7069,12 @@ impl Player {
         if let Some(server) = server
             && let Some(player_arc) = world.get_player_by_uuid(self.gameprofile.id)
         {
-            let mut event =
+            let event =
                 crate::plugin::api::events::player::inventory_close::InventoryCloseEvent::new(
                     &player_arc,
                     window_type,
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            server.plugin_manager.fire_blocking(&server, event);
         }
 
         let player_screen_handler: Arc<std::sync::Mutex<dyn ScreenHandler>> =
@@ -6972,16 +7111,14 @@ impl Player {
     pub fn on_rename_item(self: &Arc<Self>, packet: &SRenameItem<'_>) {
         self.update_last_action_time();
 
-        let mut prepare_event =
+        let prepare_event =
             crate::plugin::api::events::inventory::prepare_anvil::PrepareAnvilEvent::new(
                 self.clone(),
                 packet.item_name.to_string(),
                 1,
             );
         if let Some(server) = self.world().server.upgrade() {
-            server
-                .plugin_manager
-                .fire_blocking(&server, &mut prepare_event);
+            server.plugin_manager.fire_blocking(&server, prepare_event);
         }
 
         let screen_handler_arc = self
@@ -7049,7 +7186,7 @@ impl Player {
                 crate::plugin::api::events::inventory::inventory_open::InventoryOpenEvent::new(
                     player_arc,
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return None;
             }
@@ -7142,7 +7279,7 @@ impl Player {
             vehicle.get_entity().entity_id,
             player_jump_pending_scale(jump_scale),
         );
-        server.plugin_manager.fire_blocking(server, &mut event);
+        event = server.plugin_manager.fire_blocking(server, event);
         if !event.cancelled {
             horse.handle_start_jump(jump_scale);
         }
@@ -7176,7 +7313,7 @@ impl Player {
                 crate::plugin::api::events::inventory::inventory_open::InventoryOpenEvent::new(
                     player_arc,
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return false;
             }
@@ -7440,9 +7577,7 @@ impl Player {
                 self.clone(),
             );
         if let Some(server) = self.world().server.upgrade() {
-            server
-                .plugin_manager
-                .fire_blocking(&server, &mut interact_event);
+            interact_event = server.plugin_manager.fire_blocking(&server, interact_event);
         }
         if interact_event.cancelled {
             cancel_screen();
@@ -7464,12 +7599,8 @@ impl Player {
                     stack.item.registry_key.to_string(),
                 );
             if let Some(server) = self.world().server.upgrade() {
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut craft_event);
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut prep_craft);
+                craft_event = server.plugin_manager.fire_blocking(&server, craft_event);
+                prep_craft = server.plugin_manager.fire_blocking(&server, prep_craft);
             }
             if craft_event.cancelled || prep_craft.cancelled {
                 cancel_screen();
@@ -7487,18 +7618,14 @@ impl Player {
                     self.clone(),
                     stack.item.registry_key.to_string(),
                 );
-            let mut prep_smith =
+            let prep_smith =
                 crate::plugin::api::events::inventory::prepare_smithing::PrepareSmithingEvent::new(
                     self.clone(),
                     Some(stack.item.registry_key.to_string()),
                 );
             if let Some(server) = self.world().server.upgrade() {
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut smith_event);
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut prep_smith);
+                smith_event = server.plugin_manager.fire_blocking(&server, smith_event);
+                server.plugin_manager.fire_blocking(&server, prep_smith);
             }
             if smith_event.cancelled {
                 cancel_screen();
@@ -7513,7 +7640,7 @@ impl Player {
             && let Some(ref stack) = clicked_item
             && !stack.is_empty()
         {
-            let mut extract_event =
+            let extract_event =
                 crate::plugin::api::events::inventory::furnace_extract::FurnaceExtractEvent::new(
                     self.clone(),
                     pumpkin_util::math::position::BlockPos::new(0, 0, 0),
@@ -7522,16 +7649,14 @@ impl Player {
                     0.0,
                 );
             if let Some(server) = self.world().server.upgrade() {
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut extract_event);
+                server.plugin_manager.fire_blocking(&server, extract_event);
             }
         }
 
         if window_type == Some(WindowType::Grindstone)
             && let Some(ref stack) = clicked_item
         {
-            let mut prep_grindstone =
+            let prep_grindstone =
                 crate::plugin::api::events::inventory::prepare_grindstone::PrepareGrindstoneEvent::new(
                     self.clone(),
                     if stack.is_empty() { None } else { Some(stack.item.registry_key.to_string()) },
@@ -7539,20 +7664,18 @@ impl Player {
             if let Some(server) = self.world().server.upgrade() {
                 server
                     .plugin_manager
-                    .fire_blocking(&server, &mut prep_grindstone);
+                    .fire_blocking(&server, prep_grindstone);
             }
         }
 
         if let Some(ref stack) = clicked_item {
-            let mut prep_result =
+            let prep_result =
                 crate::plugin::api::events::inventory::prepare_inventory_result::PrepareInventoryResultEvent::new(
                     self.clone(),
                     if stack.is_empty() { None } else { Some(stack.item.registry_key.to_string()) },
                 );
             if let Some(server) = self.world().server.upgrade() {
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut prep_result);
+                server.plugin_manager.fire_blocking(&server, prep_result);
             }
         }
 
@@ -7562,9 +7685,7 @@ impl Player {
                     self.clone(),
                 );
             if let Some(server) = self.world().server.upgrade() {
-                server
-                    .plugin_manager
-                    .fire_blocking(&server, &mut drag_event);
+                drag_event = server.plugin_manager.fire_blocking(&server, drag_event);
             }
             if drag_event.cancelled {
                 cancel_screen();
@@ -7646,9 +7767,7 @@ impl Player {
         let mut event = PlayerPermissionCheckEvent::new(self.clone(), node.to_string(), result);
         let server_arc = self.world().server.upgrade();
         if let Some(server_arc) = server_arc {
-            server_arc
-                .plugin_manager
-                .fire_blocking(&server_arc, &mut event);
+            event = server_arc.plugin_manager.fire_blocking(&server_arc, event);
         }
         event.result
     }
@@ -8304,6 +8423,12 @@ impl EntityBase for Player {
         ]
         .into_iter()
         .flatten()
+        {
+            client.try_enqueue_packet(data);
+        }
+        if matches!(self.client.as_ref(), ClientPlatform::SimulatedPlayer(_))
+            && !self.tab_list_listed.load(Ordering::Relaxed)
+            && let Ok(data) = client.serialize_packet(&self.bedrock_tab_list_update())
         {
             client.try_enqueue_packet(data);
         }
@@ -9297,6 +9422,8 @@ impl InventoryPlayer for Player {
                     }
                 }
             }
+
+            ClientPlatform::SimulatedPlayer(_) => {}
         }
     }
 
@@ -9375,6 +9502,8 @@ impl InventoryPlayer for Player {
                     }
                 }
             }
+
+            ClientPlatform::SimulatedPlayer(_) => {}
         }
     }
 
@@ -9406,6 +9535,8 @@ impl InventoryPlayer for Player {
                     bedrock.try_enqueue_packet(data);
                 }
             }
+
+            ClientPlatform::SimulatedPlayer(_) => {}
         }
     }
 
@@ -9477,6 +9608,8 @@ impl InventoryPlayer for Player {
                     _ => {}
                 }
             }
+
+            ClientPlatform::SimulatedPlayer(_) => {}
         }
     }
 
@@ -9558,7 +9691,7 @@ impl InventoryPlayer for Player {
             *enchantment_level,
             bookshelf_count,
         );
-        server.plugin_manager.fire_blocking(&server, &mut event);
+        event = server.plugin_manager.fire_blocking(&server, event);
         if event.cancelled {
             return true;
         }
@@ -9588,7 +9721,7 @@ impl InventoryPlayer for Player {
             exp_level_cost,
             enchantments_to_add.clone(),
         );
-        server.plugin_manager.fire_blocking(&server, &mut event);
+        event = server.plugin_manager.fire_blocking(&server, event);
         if event.cancelled {
             return true;
         }
@@ -9719,7 +9852,7 @@ mod tests {
         read_root_vehicle, write_last_death_location, write_root_vehicle,
     };
     use crate::{
-        plugin::{BoxFuture, EventHandler, player::player_transfer::PlayerTransferEvent},
+        plugin::{BoxFuture, EventRwHandler, player::player_transfer::PlayerTransferEvent},
         server::Server,
     };
     use std::sync::Arc;
@@ -9792,8 +9925,8 @@ mod tests {
 
     struct TransferHandler;
 
-    impl EventHandler<PlayerTransferEvent> for TransferHandler {
-        fn handle_blocking<'a>(
+    impl EventRwHandler<PlayerTransferEvent> for TransferHandler {
+        fn handle<'a>(
             &'a self,
             _server: &'a Arc<Server>,
             event: &'a mut PlayerTransferEvent,
@@ -9888,9 +10021,11 @@ mod tests {
             &world,
             GameMode::Survival,
         ));
-        server
-            .plugin_manager
-            .register(Arc::new(TransferHandler), EventPriority::Normal, true);
+        server.plugin_manager.register_blocking(
+            Arc::new(TransferHandler),
+            EventPriority::Normal,
+            None,
+        );
 
         assert_eq!(player.transfer("cancel.example", 25565), None);
         assert_eq!(

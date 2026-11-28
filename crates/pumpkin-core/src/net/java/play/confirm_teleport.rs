@@ -3,21 +3,25 @@ use super::*;
 
 impl JavaClient {
     pub fn handle_confirm_teleport(&self, player: &Player, confirm_teleport: &SConfirmTeleport) {
-        // Vanilla `ServerGamePacketListenerImpl.handleAcceptTeleportPacket`
-        // (and Paper) ignore a confirm whose id is not the one we are
-        // waiting for. A later teleport replaces `awaiting_teleport`; the
-        // stale confirm for the previous id must not kick.
-        let mut awaiting_teleport = player
-            .awaiting_teleport
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some((id, position)) = awaiting_teleport.as_ref() else {
-            return;
-        };
-        if id != &confirm_teleport.teleport_id {
-            return;
+        let confirm_id = confirm_teleport.teleport_id;
+        {
+            let mut awaiting_teleport = player
+                .awaiting_teleport
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match *awaiting_teleport {
+                Some((id, position)) if id == confirm_id => {
+                    player.get_entity().set_pos(position);
+                    *awaiting_teleport = None;
+                    return;
+                }
+                Some(_) => return,
+                None if confirm_id.0 != player.teleport_id_count.load(Ordering::Relaxed) => return,
+                None => {}
+            }
         }
-        player.get_entity().set_pos(*position);
-        *awaiting_teleport = None;
+        self.try_kick(&TextComponent::text(
+            "Send Teleport confirm, but we did not teleport",
+        ));
     }
 }

@@ -106,15 +106,13 @@ impl ArrowEntity {
         let mut owner_pos = shooter.pos.load();
         owner_pos.y = owner_pos.y + f64::from(shooter.entity_dimension.load().eye_height) - 0.1;
         entity.set_pos(owner_pos);
-        let mut launch_event =
+        let launch_event =
             crate::plugin::api::events::entity::projectile_launch::ProjectileLaunchEvent::new(
                 entity.entity_id,
                 Some(shooter.entity_id),
             );
         if let Some(server) = entity.world.load().server.upgrade() {
-            server
-                .plugin_manager
-                .fire_blocking(&server, &mut launch_event);
+            server.plugin_manager.fire_blocking(&server, launch_event);
         }
 
         Self {
@@ -512,14 +510,13 @@ impl EntityBase for ArrowEntity {
                 ..
             } => (hit_pos, Some(entity.get_entity().entity_id)),
         };
-        let mut hit_event =
-            crate::plugin::api::events::entity::projectile_hit::ProjectileHitEvent::new(
-                self.entity.entity_id,
-                hit_pos,
-                hit_entity,
-            );
+        let hit_event = crate::plugin::api::events::entity::projectile_hit::ProjectileHitEvent::new(
+            self.entity.entity_id,
+            hit_pos,
+            hit_entity,
+        );
         if let Some(server) = self.entity.world.load().server.upgrade() {
-            server.plugin_manager.fire_blocking(&server, &mut hit_event);
+            server.plugin_manager.fire_blocking(&server, hit_event);
         }
 
         match hit {
@@ -566,7 +563,7 @@ impl EntityBase for ArrowEntity {
                 player_arc,
                 self.entity.entity_id,
             );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }
@@ -725,15 +722,19 @@ impl ArrowEntity {
         let scale = item_stack
             .get_data_component::<PotionDurationScaleImpl>()
             .map_or(1.0, |component| component.scale);
+        let world = living.entity.world.load();
+        let owner = self.owner.get(&world);
+        let source: &dyn EntityBase = owner.as_deref().unwrap_or(self);
         crate::item::potion::PotionContents::apply_effects_to(
             living,
             crate::item::potion::PotionContents::read_potion_effects(&item_stack),
             scale,
             crate::item::potion::PotionApplicationSource::Arrow,
             None,
+            Some(source),
         );
         if self.entity.entity_type.id == EntityType::SPECTRAL_ARROW.id {
-            living.add_effect(Self::spectral_glowing_effect());
+            living.add_effect_with_source(Self::spectral_glowing_effect(), Some(source));
         }
     }
 

@@ -113,8 +113,8 @@ impl Player {
         {
             return;
         }
-        let mut event = PlayerCustomMovementEvent::new(self.clone(), id);
-        server.plugin_manager.fire_blocking(server, &mut event);
+        let event = PlayerCustomMovementEvent::new(self.clone(), id);
+        let event = server.plugin_manager.fire_blocking(server, event);
         if event.cancelled {
             return;
         }

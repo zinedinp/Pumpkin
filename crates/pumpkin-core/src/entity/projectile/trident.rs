@@ -110,15 +110,13 @@ impl TridentEntity {
         entity.set_pos(owner_pos);
         entity.data.store(shooter.entity_id, Ordering::Relaxed);
 
-        let mut launch_event =
+        let launch_event =
             crate::plugin::api::events::entity::projectile_launch::ProjectileLaunchEvent::new(
                 entity.entity_id,
                 Some(shooter.entity_id),
             );
         if let Some(server) = entity.world.load().server.upgrade() {
-            server
-                .plugin_manager
-                .fire_blocking(&server, &mut launch_event);
+            server.plugin_manager.fire_blocking(&server, launch_event);
         }
 
         Self::with_item(
@@ -373,7 +371,6 @@ impl TridentEntity {
         );
 
         let owner = self.owner.get(&world);
-        let owner_player = self.owner.get_player(&world);
         self.dealt_damage.store(true, Ordering::Relaxed);
         let hurt = target.damage_with_context(
             target.as_ref(),
@@ -387,8 +384,8 @@ impl TridentEntity {
             EnchantmentHelper::on_trident_post_attack(
                 &world,
                 &self.entity,
-                owner_player.as_ref(),
-                target.get_entity(),
+                owner.as_deref(),
+                target.as_ref(),
                 &weapon_stack,
             );
         }
@@ -652,14 +649,13 @@ impl EntityBase for TridentEntity {
                 entity, hit_pos, ..
             } => (*hit_pos, Some(entity.get_entity().entity_id)),
         };
-        let mut hit_event =
-            crate::plugin::api::events::entity::projectile_hit::ProjectileHitEvent::new(
-                self.entity.entity_id,
-                event_pos,
-                hit_entity_id,
-            );
+        let hit_event = crate::plugin::api::events::entity::projectile_hit::ProjectileHitEvent::new(
+            self.entity.entity_id,
+            event_pos,
+            hit_entity_id,
+        );
         if let Some(server) = self.entity.world.load().server.upgrade() {
-            server.plugin_manager.fire_blocking(&server, &mut hit_event);
+            server.plugin_manager.fire_blocking(&server, hit_event);
         }
 
         match hit {
@@ -697,7 +693,7 @@ impl EntityBase for TridentEntity {
                     player.clone(),
                     self.entity.entity_id,
                 );
-            server.plugin_manager.fire_blocking(&server, &mut event);
+            event = server.plugin_manager.fire_blocking(&server, event);
             if event.cancelled {
                 return;
             }

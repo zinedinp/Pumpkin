@@ -300,7 +300,7 @@ impl PendingConnection {
             packet_id.0,
             payload,
         );
-        server.plugin_manager.fire(&server, &mut event).await;
+        event = server.plugin_manager.fire(&server, event).await;
         let extras = event
             .extra_packets
             .iter()
@@ -340,7 +340,7 @@ impl PendingConnection {
             packet.id,
             packet.payload.clone(),
         );
-        server.plugin_manager.fire(&server, &mut event).await;
+        event = server.plugin_manager.fire(&server, event).await;
         (!event.cancelled).then(|| RawPacket {
             id: event.packet_id,
             payload: event.payload,

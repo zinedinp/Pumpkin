@@ -489,6 +489,7 @@ pub fn register_block(id: &str, spec: &BlockSpec) -> Result<&'static Block, Regi
         flammable: None,
         experience: None,
         loot_table: None,
+        property_slots: &[],
     }));
     let hints: &'static RenderHints = Box::leak(Box::new(spec.hints()));
     let slot = usize::from(index);
